@@ -10,7 +10,7 @@ export default defineConfig({
     ViteMinifyPlugin({}),
     mkcert(),
   ],
-  server : {
+  server: {
     https: true,
   },
   css: {
@@ -20,5 +20,22 @@ export default defineConfig({
   },
   build: {
     outDir: '../dist',
+    emptyOutDir: true,
+    cssCodeSplit: false,
+    sourcemap: false,
+    minify: 'esbuild',
+    assetsInlineLimit: 4096,
+    reportCompressedSize: false,
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
+  esbuild: {
+    drop: ['console', 'debugger'],
+    legalComments: 'none',
   },
 })

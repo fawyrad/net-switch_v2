@@ -1,151 +1,477 @@
 #!/bin/sh
 
-JSON_FILE="/data/adb/.config/net-switch/isolated.json"
+BASE_DIR="/data/adb/.config/net-switch"
+WIFI_JSON="$BASE_DIR/wifi.json"
+MOBILE_JSON="$BASE_DIR/mobile.json"
+DOMAINS_DIR="$BASE_DIR/domains"
+LEGACY_JSON="$BASE_DIR/isolated.json"
+CHAIN="NETSWITCH"
+WIFI_IFACES="wlan+"
+MOBILE_IFACES="rmnet+ ccmni+ wwan+ pdp+"
 
 cli_usage() {
-	echo "Usage: netswitch {block|unblock|list} [package-name...]"
-	echo "Commands:"
-	echo "  block <package-name> [package-name...]    Block internet access for specified packages"
-	echo "  unblock <package-name|all> [package-name...]  Unblock internet access for specified packages"
-	echo "  list                                   Show currently blocked packages"
+	cat <<EOF
+Usage: netswitch <command> [args]
+Commands:
+  block-wifi <pkg...>              Block Wi-Fi access for packages
+  unblock-wifi <pkg...>            Restore Wi-Fi access for packages
+  block-mobile <pkg...>            Block mobile data access for packages
+  unblock-mobile <pkg...>          Restore mobile data access for packages
+  block <pkg...>                   Block both Wi-Fi and mobile data
+  unblock <pkg...|all>             Restore both Wi-Fi and mobile data
+  set-wifi <pkg...>                Replace the whole Wi-Fi blocked set
+  set-mobile <pkg...>               Replace the whole mobile blocked set
+  domain-add <pkg> <entry...>      Block a domain or IP for a package
+  domain-remove <pkg> <entry...>   Unblock a domain or IP for a package
+  domain-list <pkg>                Show blocked domains/IPs for a package
+  list [--json]                    Show current isolation status
+  apply                            Rebuild firewall rules from saved config
+  reset                            Clear all rules and saved config
+  help                             Show this help message
+EOF
+}
+
+ensure_dirs() {
+	mkdir -p "$BASE_DIR" "$DOMAINS_DIR"
+	[ -f "$WIFI_JSON" ] || echo "[]" >"$WIFI_JSON"
+	[ -f "$MOBILE_JSON" ] || echo "[]" >"$MOBILE_JSON"
+}
+
+migrate_legacy() {
+	[ -f "$LEGACY_JSON" ] || return 0
+	legacy_pkgs="$(tr -d '[]" ' <"$LEGACY_JSON" | tr ',' ' ')"
+	if [ -n "$legacy_pkgs" ]; then
+		write_json "$WIFI_JSON" $legacy_pkgs
+		write_json "$MOBILE_JSON" $legacy_pkgs
+	fi
+	mv "$LEGACY_JSON" "$LEGACY_JSON.bak" 2>/dev/null
 }
 
 get_uid() {
 	package="$1"
 	uid="$(grep "^$package" /data/system/packages.list | awk '{print $2; exit}')"
-	[ ! -n "$uid" ] && return 1
+	[ -n "$uid" ] || return 1
 	echo "$uid"
-	return 0
 }
 
 read_json() {
-	if [ -f "$JSON_FILE" ]; then
-		cat "$JSON_FILE" | tr -d '[]" ' | tr ',' ' '
-	fi
+	[ -f "$1" ] && tr -d '[]" ' <"$1" | tr ',' ' '
 }
 
 write_json() {
+	target="$1"
+	shift
 	if [ $# -eq 0 ]; then
-		echo "[]" >"$JSON_FILE"
+		echo "[]" >"$target"
 		return 0
 	fi
-
 	(
 		printf "["
 		first=1
 		for pkg in "$@"; do
 			if [ $first -eq 1 ]; then
-				printf "\"%s\"" "$pkg"
+				printf '"%s"' "$pkg"
 				first=0
 			else
-				printf ",\"%s\"" "$pkg"
+				printf ',"%s"' "$pkg"
 			fi
 		done
 		printf "]"
-	) >"$JSON_FILE"
+	) >"$target"
 }
 
-block_package() {
-	package="$1"
-	uid="$(get_uid "$package")"
-	if [ $? -ne 0 ] || [ -z "$uid" ]; then
-		echo "Error: Package '$package' not found"
-		return 1
+json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+is_ipv4() {
+	case "$1" in
+	*[!0-9.]*) return 1 ;;
+	*.*.*.*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+is_ipv6() {
+	case "$1" in
+	*:*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+resolve_domain() {
+	domain="$1"
+	if command -v getent >/dev/null 2>&1; then
+		getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u
+		return 0
 	fi
-
-	iptables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
-	ip6tables -I OUTPUT -m owner --uid-owner "$uid" -j REJECT
-
-	current_packages="$(read_json)"
-	for app in $current_packages; do
-		if [ "$app" = "$package" ]; then
-			echo "Package $package is already blocked"
-			return 0
-		fi
-	done
-
-	write_json $current_packages $package
-	echo "Blocked internet access for $package (UID: $uid)"
+	nslookup "$domain" 2>/dev/null | awk '/^Address/ && $0 !~ /#53/ {print $NF}' | sort -u
 }
 
-unblock_package() {
-	package="$1"
-	uid="$(get_uid "$package")"
-	if [ $? -ne 0 ] || [ -z "$uid" ]; then
-		echo "Error: Package '$package' not found"
-		return 1
-	fi
-
-	iptables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
-	ip6tables -D OUTPUT -m owner --uid-owner "$uid" -j REJECT 2>/dev/null
-
-	current_packages="$(read_json)"
-	new_packages=""
-	for app in $current_packages; do
-		[ "$app" != "$package" ] && new_packages="$new_packages $app"
+set_add() {
+	list_file="$1"
+	pkg="$2"
+	current="$(read_json "$list_file")"
+	for p in $current; do
+		[ "$p" = "$pkg" ] && return 0
 	done
-
-	write_json $new_packages
-	echo "Unblocked internet access for $package (UID: $uid)"
+	write_json "$list_file" $current "$pkg"
 }
 
-unblock_all() {
-	for package in $(read_json); do
-		unblock_package "$package"
+set_remove() {
+	list_file="$1"
+	pkg="$2"
+	current="$(read_json "$list_file")"
+	remaining=""
+	for p in $current; do
+		[ "$p" = "$pkg" ] && continue
+		remaining="$remaining $p"
 	done
-	write_json
-	echo "Unblocked all packages"
+	write_json "$list_file" $remaining
+}
+
+set_contains() {
+	list_file="$1"
+	pkg="$2"
+	for p in $(read_json "$list_file"); do
+		[ "$p" = "$pkg" ] && return 0
+	done
+	return 1
+}
+
+domains_file_for() {
+	echo "$DOMAINS_DIR/$1.list"
+}
+
+domain_add() {
+	pkg="$1"
+	shift
+	file="$(domains_file_for "$pkg")"
+	touch "$file"
+	for entry in "$@"; do
+		grep -qxF "$entry" "$file" 2>/dev/null || echo "$entry" >>"$file"
+	done
+}
+
+domain_remove() {
+	pkg="$1"
+	shift
+	file="$(domains_file_for "$pkg")"
+	[ -f "$file" ] || return 0
+	tmp="$file.tmp"
+	: >"$tmp"
+	while IFS= read -r line; do
+		skip=0
+		for entry in "$@"; do
+			[ "$line" = "$entry" ] && skip=1
+		done
+		[ $skip -eq 0 ] && [ -n "$line" ] && echo "$line" >>"$tmp"
+	done <"$file"
+	mv "$tmp" "$file"
+}
+
+ensure_chain() {
+	bin="$1"
+	"$bin" -N "$CHAIN" 2>/dev/null
+	"$bin" -C OUTPUT -j "$CHAIN" 2>/dev/null || "$bin" -I OUTPUT -j "$CHAIN"
+	"$bin" -F "$CHAIN" 2>/dev/null
+}
+
+apply_rules() {
+	ensure_dirs
+	ensure_chain iptables
+	ensure_chain ip6tables
+
+	for pkg in $(read_json "$WIFI_JSON"); do
+		uid="$(get_uid "$pkg")" || continue
+		for iface in $WIFI_IFACES; do
+			iptables -A "$CHAIN" -o "$iface" -m owner --uid-owner "$uid" -j REJECT
+			ip6tables -A "$CHAIN" -o "$iface" -m owner --uid-owner "$uid" -j REJECT
+		done
+	done
+
+	for pkg in $(read_json "$MOBILE_JSON"); do
+		uid="$(get_uid "$pkg")" || continue
+		for iface in $MOBILE_IFACES; do
+			iptables -A "$CHAIN" -o "$iface" -m owner --uid-owner "$uid" -j REJECT
+			ip6tables -A "$CHAIN" -o "$iface" -m owner --uid-owner "$uid" -j REJECT
+		done
+	done
+
+	[ -d "$DOMAINS_DIR" ] || return 0
+	for file in "$DOMAINS_DIR"/*.list; do
+		[ -f "$file" ] || continue
+		pkg="$(basename "$file" .list)"
+		uid="$(get_uid "$pkg")" || continue
+		while IFS= read -r entry; do
+			[ -z "$entry" ] && continue
+			if is_ipv4 "$entry"; then
+				iptables -A "$CHAIN" -m owner --uid-owner "$uid" -d "$entry" -j REJECT
+			elif is_ipv6 "$entry"; then
+				ip6tables -A "$CHAIN" -m owner --uid-owner "$uid" -d "$entry" -j REJECT
+			else
+				for ip in $(resolve_domain "$entry"); do
+					if is_ipv4 "$ip"; then
+						iptables -A "$CHAIN" -m owner --uid-owner "$uid" -d "$ip" -j REJECT
+					elif is_ipv6 "$ip"; then
+						ip6tables -A "$CHAIN" -m owner --uid-owner "$uid" -d "$ip" -j REJECT
+					fi
+				done
+			fi
+		done <"$file"
+	done
+}
+
+reset_all() {
+	ensure_dirs
+	iptables -F "$CHAIN" 2>/dev/null
+	ip6tables -F "$CHAIN" 2>/dev/null
+	write_json "$WIFI_JSON"
+	write_json "$MOBILE_JSON"
+	rm -f "$DOMAINS_DIR"/*.list 2>/dev/null
+	echo "All packages unblocked and rules cleared"
 }
 
 list_blocked() {
-	packages="$(read_json)"
-	if [ -z "$packages" ]; then
+	json_mode=0
+	[ "$1" = "--json" ] && json_mode=1
+
+	domain_pkgs=""
+	if [ -d "$DOMAINS_DIR" ]; then
+		for f in "$DOMAINS_DIR"/*.list; do
+			[ -f "$f" ] || continue
+			domain_pkgs="$domain_pkgs $(basename "$f" .list)"
+		done
+	fi
+	all_pkgs="$( { read_json "$WIFI_JSON"; read_json "$MOBILE_JSON"; printf '%s\n' $domain_pkgs; } | tr ' ' '\n' | sort -u)"
+
+	if [ $json_mode -eq 1 ]; then
+		printf "{"
+		first=1
+		for pkg in $all_pkgs; do
+			[ -z "$pkg" ] && continue
+			wifi="false"
+			mobile="false"
+			set_contains "$WIFI_JSON" "$pkg" && wifi="true"
+			set_contains "$MOBILE_JSON" "$pkg" && mobile="true"
+			[ $first -eq 0 ] && printf ","
+			first=0
+			printf '"%s":{"wifi":%s,"mobile":%s,"domains":[' "$(json_escape "$pkg")" "$wifi" "$mobile"
+			file="$(domains_file_for "$pkg")"
+			if [ -f "$file" ]; then
+				dfirst=1
+				while IFS= read -r entry; do
+					[ -z "$entry" ] && continue
+					[ $dfirst -eq 0 ] && printf ","
+					dfirst=0
+					printf '"%s"' "$(json_escape "$entry")"
+				done <"$file"
+			fi
+			printf "]}"
+		done
+		printf "}"
+		return 0
+	fi
+
+	if [ -z "$all_pkgs" ]; then
 		echo "No packages are currently blocked"
-		exit 0
+		return 0
 	fi
 
 	echo "Currently blocked packages:"
-	for package in $packages; do
-		uid="$(get_uid "$package")"
-		if [ $? -eq 0 ] && [ -n "$uid" ]; then
-			echo "- $package (UID: $uid)"
-		else
-			echo "- $package (package no longer exists)"
-		fi
+	for pkg in $all_pkgs; do
+		[ -z "$pkg" ] && continue
+		status=""
+		set_contains "$WIFI_JSON" "$pkg" && status="$status wifi"
+		set_contains "$MOBILE_JSON" "$pkg" && status="$status mobile"
+		file="$(domains_file_for "$pkg")"
+		[ -s "$file" ] && status="$status domains"
+		echo "- $pkg:$status"
 	done
 }
 
-handle_block() {
+require_args() {
 	if [ $# -eq 0 ]; then
-		echo -e "Error: Bad arguments\nTry 'netswitch help' for more information."
+		echo "Error: Bad arguments"
+		cli_usage
 		exit 1
 	fi
-
-	for package in "$@"; do
-		block_package "$package"
-	done
 }
 
-handle_unblock() {
-	if [ $# -eq 0 ]; then
-		echo -e "Error: Bad arguments\nTry 'netswitch help' for more information."
-		exit 1
-	fi
+cmd_block_wifi() {
+	require_args "$@"
+	for pkg in "$@"; do
+		get_uid "$pkg" >/dev/null || {
+			echo "Error: Package '$pkg' not found"
+			continue
+		}
+		set_add "$WIFI_JSON" "$pkg"
+		echo "Blocked Wi-Fi access for $pkg"
+	done
+	apply_rules
+}
 
+cmd_unblock_wifi() {
+	require_args "$@"
+	for pkg in "$@"; do
+		set_remove "$WIFI_JSON" "$pkg"
+		echo "Unblocked Wi-Fi access for $pkg"
+	done
+	apply_rules
+}
+
+cmd_block_mobile() {
+	require_args "$@"
+	for pkg in "$@"; do
+		get_uid "$pkg" >/dev/null || {
+			echo "Error: Package '$pkg' not found"
+			continue
+		}
+		set_add "$MOBILE_JSON" "$pkg"
+		echo "Blocked mobile data access for $pkg"
+	done
+	apply_rules
+}
+
+cmd_unblock_mobile() {
+	require_args "$@"
+	for pkg in "$@"; do
+		set_remove "$MOBILE_JSON" "$pkg"
+		echo "Unblocked mobile data access for $pkg"
+	done
+	apply_rules
+}
+
+cmd_set_wifi() {
+	write_json "$WIFI_JSON" "$@"
+	apply_rules
+	echo "Wi-Fi blocked set updated ($# packages)"
+}
+
+cmd_set_mobile() {
+	write_json "$MOBILE_JSON" "$@"
+	apply_rules
+	echo "Mobile blocked set updated ($# packages)"
+}
+
+cmd_domain_add() {
+	require_args "$@"
+	pkg="$1"
+	shift
+	require_args "$@"
+	domain_add "$pkg" "$@"
+	apply_rules
+	echo "Added $# domain rule(s) for $pkg"
+}
+
+cmd_domain_remove() {
+	require_args "$@"
+	pkg="$1"
+	shift
+	require_args "$@"
+	domain_remove "$pkg" "$@"
+	apply_rules
+	echo "Removed domain rule(s) for $pkg"
+}
+
+cmd_domain_list() {
+	require_args "$@"
+	file="$(domains_file_for "$1")"
+	[ -f "$file" ] && cat "$file"
+}
+
+cmd_block() {
+	require_args "$@"
+	for pkg in "$@"; do
+		get_uid "$pkg" >/dev/null || {
+			echo "Error: Package '$pkg' not found"
+			continue
+		}
+		set_add "$WIFI_JSON" "$pkg"
+		set_add "$MOBILE_JSON" "$pkg"
+		echo "Blocked internet access for $pkg"
+	done
+	apply_rules
+}
+
+cmd_unblock() {
+	require_args "$@"
 	if [ "$1" = "all" ]; then
-		unblock_all
-		exit 0
+		reset_all
+		return 0
 	fi
-
-	for package in "$@"; do
-		unblock_package "$package"
+	for pkg in "$@"; do
+		set_remove "$WIFI_JSON" "$pkg"
+		set_remove "$MOBILE_JSON" "$pkg"
+		echo "Unblocked internet access for $pkg"
 	done
+	apply_rules
 }
+
+ensure_dirs
+migrate_legacy
 
 case "$1" in
-"block") shift && handle_block $@ ;;
-"unblock") shift && handle_unblock $@ ;;
-"list") list_blocked ;;
-"help") cli_usage ;;
-*) cli_usage && exit 1 ;;
+"block-wifi")
+	shift
+	cmd_block_wifi "$@"
+	;;
+"unblock-wifi")
+	shift
+	cmd_unblock_wifi "$@"
+	;;
+"block-mobile")
+	shift
+	cmd_block_mobile "$@"
+	;;
+"unblock-mobile")
+	shift
+	cmd_unblock_mobile "$@"
+	;;
+"set-wifi")
+	shift
+	cmd_set_wifi "$@"
+	;;
+"set-mobile")
+	shift
+	cmd_set_mobile "$@"
+	;;
+"domain-add")
+	shift
+	cmd_domain_add "$@"
+	;;
+"domain-remove")
+	shift
+	cmd_domain_remove "$@"
+	;;
+"domain-list")
+	shift
+	cmd_domain_list "$@"
+	;;
+"block")
+	shift
+	cmd_block "$@"
+	;;
+"unblock")
+	shift
+	cmd_unblock "$@"
+	;;
+"list")
+	shift
+	list_blocked "$@"
+	;;
+"apply")
+	apply_rules
+	echo "Rules applied"
+	;;
+"reset")
+	reset_all
+	;;
+"help")
+	cli_usage
+	;;
+*)
+	cli_usage
+	exit 1
+	;;
 esac

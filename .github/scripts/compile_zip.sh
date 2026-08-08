@@ -16,8 +16,6 @@ sed -i "s/version=.*/version=$version ($release_code)/" module/module.prop
 sed -i "s/versionCode=.*/versionCode=$version_code/" module/module.prop
 
 # Copy module files
-cp -r ./src/libs module
-cp -r ./src/scripts/* module/system/bin
 cp LICENSE ./module
 
 # Parse version info to module prop

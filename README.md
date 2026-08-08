@@ -6,16 +6,16 @@ Net Switch is a Magisk module to isolate apps from accessing the internet on you
 Fully standalone, operates fully on iptables.
 
 ## Features
-- Per-app internet isolation setting
+- Independent per-app **Wi-Fi** and **mobile data** switches
+- Per-app **custom domain/IP blocking** (block ads, trackers or any host per app)
 - Operates without VPN (unlike AFWall)
-- Don't suck on battery
-- Module WebUI for easy configuration
-- **Profiles**: Save and restore sets of isolated apps (new in v1.3)
-- **Backup Manager**: Save and restore created profiles (new in v1.3)
-- **Revamped WebUI**: Responsive design with animations and feedback (new in v1.3)
+- Doesn't suck on battery
+- Module WebUI, redesigned in **Material Design 3 expressive** style (new in v1.4)
+- **Profiles**: Save and restore sets of blocked apps
+- **Backup Manager**: Save and restore created profiles
 
 ## Supported Root Managers
-- [APatch](https://github.com/bmax121/APatch) 
+- [APatch](https://github.com/bmax121/APatch)
 - [KernelSU](https://github.com/tiann/KernelSU)
 - [Magisk](https://github.com/topjohnwu/Magisk)  <sup>([no WebUI](https://github.com/topjohnwu/Magisk/issues/8609#event-15568590949)👀)</sup>
 
@@ -29,25 +29,49 @@ Magisk doesn't support module WebUI on their manager, but you can use one of the
 - Flash Net Switch Module
 - Reboot
 - Open Net Switch WebUI
-- Select apps you wish to isolate. Changes are applied immediately, no need to reboot.
-- (v1.3) Create and apply **profiles** to quickly switch isolation states.
-- (v1.3) Backup and restore your profiles.
+- Toggle **Wi-Fi** and **Data** independently for each app. Changes are applied immediately, no need to reboot.
+- Tap the ban icon on an app to block custom domains or IP addresses for that app only.
+- Create and apply **profiles** to quickly switch blocked-app sets.
+- Backup and restore your profiles.
 
 ## Terminal Usage
 Open Termux or any terminal with root access and run:
 ```bash
-netswitch block <package>      # block packages
-netswitch unblock <package>    # unblock packages
-netswitch list                 # show currently blocked packages
-netswitch unblock all          # unblock all restricted packages
-````
+netswitch block-wifi <package>            # block Wi-Fi for packages
+netswitch unblock-wifi <package>          # restore Wi-Fi for packages
+netswitch block-mobile <package>          # block mobile data for packages
+netswitch unblock-mobile <package>        # restore mobile data for packages
+netswitch block <package>                 # block both Wi-Fi and mobile data
+netswitch unblock <package>               # restore both Wi-Fi and mobile data
+netswitch unblock all                     # restore all packages
+
+netswitch domain-add <package> <host>     # block a domain/IP for a package
+netswitch domain-remove <package> <host>  # unblock a domain/IP for a package
+netswitch domain-list <package>           # show blocked domains/IPs for a package
+
+netswitch list                            # show current isolation status
+netswitch list --json                     # same, machine readable
+netswitch apply                           # rebuild firewall rules from saved config
+netswitch reset                           # clear all rules and saved config
+```
+
+Custom domain rules are resolved to IP addresses and re-applied automatically every 15 minutes in the background (and on boot), since a domain's IP can change over time.
 
 Terminal Screenshot
 ![Net-switch Terminal Example](./terminal.webp)
 
-## Changelog
+## Building
+The WebUI is a Vite project bundled and minified into a single static bundle:
+```bash
+cd webui
+npm install
+npm run build         # outputs a minified bundle to webui/dist
+npm run build:deploy  # also copies the bundle into module/webroot and zips the module
+```
+CI (`.github/workflows/build.yml`) performs the same `build` step before packaging the flashable zip.
 
-* **v1.3** — Added profiles system, backup manager, and revamped WebUI
+## Changelog
+See [changelog.md](./changelog.md).
 
 ## Links
 

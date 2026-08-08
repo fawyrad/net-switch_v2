@@ -1,15 +1,11 @@
-ISOLATED="/data/adb/.config/net-switch/isolated.json"
-if [ ! -f $ISOLATED ]; then
-	mkdir -p $(dirname $ISOLATED)
-	touch $ISOLATED
-fi
+BASE_DIR="/data/adb/.config/net-switch"
+mkdir -p "$BASE_DIR/domains"
+[ -f "$BASE_DIR/wifi.json" ] || echo "[]" >"$BASE_DIR/wifi.json"
+[ -f "$BASE_DIR/mobile.json" ] || echo "[]" >"$BASE_DIR/mobile.json"
 
 if [ "$KSU" = "true" ] || [ "$APATCH" = "true" ]; then
-	# remove action on APatch / KernelSU
 	rm "$MODPATH/action.sh"
-	# skip mount on APatch / KernelSU
 	touch "$MODPATH/skip_mount"
-	# symlink ourselves on $PATH
 	manager_paths="/data/adb/ap/bin /data/adb/ksu/bin"
 	for dir in $manager_paths; do
 		if [ -d "$dir" ]; then
