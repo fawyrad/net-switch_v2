@@ -25,7 +25,7 @@ let installedPackages = new Set();
 let appOrigin = new Map();
 let appConfig = {};
 let currentDomainPkg = "";
-let currentFilter = "user";
+let currentFilter = "user"; // "all" | "user" | "system"
 let currentSort = "blocked";
 
 /* ============================================================================
@@ -165,7 +165,7 @@ function applyFilters() {
   [...appsList.children].forEach((node) => {
     const pkg = node.dataset.pkg;
     const origin = appOrigin.get(pkg) || "user";
-    const matchesOrigin = origin === currentFilter;
+    const matchesOrigin = currentFilter === "all" || origin === currentFilter;
     const matchesQuery = !query || pkg.toLowerCase().includes(query);
     const visible = matchesOrigin && matchesQuery;
     node.style.display = visible ? "" : "none";
@@ -381,31 +381,84 @@ function setupSearch() {
   document.getElementById("search")?.addEventListener("input", () => applyFilters());
 }
 
-function setupFilters() {
-  const chips = [...document.querySelectorAll(".filter-chip")];
-  chips.forEach((chip) => {
-    chip.addEventListener("click", () => {
-      currentFilter = chip.dataset.filter;
-      chips.forEach((c) => c.setAttribute("aria-pressed", c === chip ? "true" : "false"));
-      applyFilters();
-    });
+/**
+ * Wires up a small anchored dropdown menu (trigger button + floating panel
+ * of `.dropdown-item` buttons). Handles open/close, closing on outside
+ * click / Escape, and closing sibling dropdowns (including their trigger's
+ * aria-expanded state) when one opens.
+ */
+const registeredDropdowns = [];
+
+function closeOtherDropdowns(except) {
+  registeredDropdowns.forEach((d) => {
+    if (d !== except) d.close();
   });
 }
 
-function setupSort() {
-  const sortBtn = document.getElementById("sort-btn");
-  const modal = document.getElementById("sort_modal");
-  const options = [...document.querySelectorAll(".sort-option")];
-  if (!sortBtn || !modal) return;
+function setupDropdown(triggerId, panelId, onSelect) {
+  const trigger = document.getElementById(triggerId);
+  const panel = document.getElementById(panelId);
+  if (!trigger || !panel) return;
 
-  sortBtn.addEventListener("click", () => modal.showModal());
-  options.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      currentSort = btn.dataset.sort;
-      options.forEach((o) => o.setAttribute("aria-pressed", o === btn ? "true" : "false"));
-      applySort();
-      modal.close();
-    });
+  const entry = {
+    close() {
+      panel.classList.add("hidden");
+      trigger.setAttribute("aria-expanded", "false");
+    },
+  };
+  const open = () => {
+    closeOtherDropdowns(entry);
+    panel.classList.remove("hidden");
+    trigger.setAttribute("aria-expanded", "true");
+  };
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (panel.classList.contains("hidden")) open();
+    else entry.close();
+  });
+
+  panel.addEventListener("click", (e) => {
+    const item = e.target.closest(".dropdown-item");
+    if (!item) return;
+    onSelect(item);
+    entry.close();
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!panel.classList.contains("hidden") && !panel.contains(e.target) && e.target !== trigger) {
+      entry.close();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") entry.close();
+  });
+
+  registeredDropdowns.push(entry);
+}
+
+const FILTER_SHORT_LABEL_KEYS = { all: "filter_all_short", user: "filter_user_short", system: "filter_system_short" };
+
+function setupFilterDropdown() {
+  const label = document.getElementById("filter-btn-label");
+  setupDropdown("filter-btn", "filter-dropdown", (item) => {
+    currentFilter = item.dataset.filter;
+    document
+      .querySelectorAll("#filter-dropdown .dropdown-item")
+      .forEach((el) => el.setAttribute("aria-pressed", el === item ? "true" : "false"));
+    if (label) label.textContent = t(FILTER_SHORT_LABEL_KEYS[currentFilter] || currentFilter);
+    applyFilters();
+  });
+}
+
+function setupSortDropdown() {
+  setupDropdown("sort-btn", "sort-dropdown", (item) => {
+    currentSort = item.dataset.sort;
+    document
+      .querySelectorAll("#sort-dropdown .dropdown-item")
+      .forEach((el) => el.setAttribute("aria-pressed", el === item ? "true" : "false"));
+    applySort();
   });
 }
 
@@ -914,8 +967,8 @@ function setupTabs() {
 document.addEventListener("DOMContentLoaded", async () => {
   setupTabs();
   setupSearch();
-  setupFilters();
-  setupSort();
+  setupFilterDropdown();
+  setupSortDropdown();
   setupBulkActions();
   setupDomainModal();
   setupProfilesPage();

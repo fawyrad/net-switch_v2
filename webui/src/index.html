@@ -9,67 +9,81 @@
     <script type="module" src="scripts/mmrl.js"></script>
 </head>
 
-<body class="root_layout min-h-screen bg-surface text-on-surface">
-    <main id="app-main">
+<body class="root_layout flex h-[100dvh] flex-col overflow-hidden bg-surface text-on-surface">
+    <main id="app-main" class="min-h-0 flex-1 overflow-hidden">
 
         <!-- ============================= APPS PAGE ============================= -->
-        <section id="page-apps" class="page px-4 pt-6 pb-28" data-page="apps">
-            <h1 class="text-4xl font-normal text-on-surface" data-i18n="apps_page_title">Applications</h1>
-            <p id="apps-page-count" class="mt-1 text-sm text-on-surface-variant">&nbsp;</p>
+        <section id="page-apps" class="page hidden h-full flex flex-col overflow-hidden" data-page="apps">
+            <div class="flex-shrink-0 px-4 pt-6">
+                <h1 class="text-4xl font-normal text-on-surface" data-i18n="apps_page_title">Applications</h1>
+                <p id="apps-page-count" class="mt-1 text-sm text-on-surface-variant">&nbsp;</p>
 
-            <div class="mt-4 relative">
-                <i class="fas fa-search absolute top-1/2 left-4 -translate-y-1/2 transform text-sm text-on-surface-variant"></i>
-                <input type="search" id="search" data-i18n-placeholder="search_placeholder"
-                    placeholder="Search apps by name..."
-                    class="w-full rounded-full bg-surface-container-high py-3 pr-4 pl-11 text-sm text-on-surface shadow-sm focus:ring-2 focus:ring-primary focus:outline-none" />
+                <div class="mt-4 relative">
+                    <i class="fas fa-search absolute top-1/2 left-4 -translate-y-1/2 transform text-sm text-on-surface-variant"></i>
+                    <input type="search" id="search" data-i18n-placeholder="search_placeholder"
+                        placeholder="Search apps by name..."
+                        class="w-full rounded-full bg-surface-container-high py-3 pr-4 pl-11 text-sm text-on-surface shadow-sm focus:ring-2 focus:ring-primary focus:outline-none" />
+                </div>
+
+                <div class="mt-3 flex items-center gap-2">
+                    <button type="button" id="block-all-btn" data-i18n="block_all"
+                        class="min-w-0 flex-1 truncate rounded-full border border-outline-variant px-3 py-2 text-xs font-medium text-on-surface transition-transform duration-150 active:scale-95">
+                        Block All
+                    </button>
+                    <button type="button" id="unblock-all-btn" data-i18n="unblock_all"
+                        class="min-w-0 flex-1 truncate rounded-full bg-secondary-container px-3 py-2 text-xs font-medium text-on-secondary-container transition-transform duration-150 active:scale-95">
+                        Unblock All
+                    </button>
+
+                    <div class="relative flex-shrink-0">
+                        <button type="button" id="filter-btn" aria-haspopup="true" aria-expanded="false"
+                            class="flex items-center gap-1.5 rounded-full bg-surface-container-high px-3 py-2 text-xs font-medium text-on-surface-variant transition-transform duration-150 active:scale-95">
+                            <span id="filter-btn-label" data-i18n="filter_user_short">User</span>
+                            <i class="fas fa-chevron-down text-[9px]"></i>
+                        </button>
+                        <div id="filter-dropdown" class="dropdown-menu hidden right-0 left-auto">
+                            <button type="button" class="dropdown-item" data-filter="all" aria-pressed="false" data-i18n="filter_all_apps">All Apps</button>
+                            <button type="button" class="dropdown-item" data-filter="user" aria-pressed="true" data-i18n="filter_user_apps">User Apps</button>
+                            <button type="button" class="dropdown-item" data-filter="system" aria-pressed="false" data-i18n="filter_system_apps">System Apps</button>
+                        </div>
+                    </div>
+
+                    <div class="relative flex-shrink-0">
+                        <button type="button" id="sort-btn" aria-haspopup="true" aria-expanded="false"
+                            data-i18n-title="sort_label" title="Sort"
+                            class="flex h-9 w-9 items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant transition-transform duration-150 active:scale-95">
+                            <i class="fas fa-arrow-down-wide-short text-xs"></i>
+                        </button>
+                        <div id="sort-dropdown" class="dropdown-menu hidden right-0 left-auto">
+                            <button type="button" class="dropdown-item" data-sort="blocked" aria-pressed="true" data-i18n="sort_blocked_first">Blocked first</button>
+                            <button type="button" class="dropdown-item" data-sort="name-asc" aria-pressed="false" data-i18n="sort_name_asc">Name (A&ndash;Z)</button>
+                            <button type="button" class="dropdown-item" data-sort="name-desc" aria-pressed="false" data-i18n="sort_name_desc">Name (Z&ndash;A)</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4 flex items-center justify-between px-1">
+                    <span data-i18n="apps_list_title" class="text-xs font-medium uppercase tracking-wide text-on-surface-variant">
+                        Applications
+                    </span>
+                    <span class="flex items-center gap-3 text-xs text-on-surface-variant">
+                        <span title="Wi-Fi"><i class="fas fa-wifi mr-1"></i><span data-i18n="wifi_label">Wi-Fi</span></span>
+                        <span title="Mobile data"><i class="fas fa-signal mr-1"></i><span data-i18n="mobile_label">Data</span></span>
+                        <span title="Domains"><i class="fas fa-globe mr-1"></i><span data-i18n="domains_label">Domains</span></span>
+                    </span>
+                </div>
             </div>
 
-            <div class="mt-3 flex items-center gap-2">
-                <button type="button" class="filter-chip flex-1" data-filter="user" aria-pressed="true">
-                    <i class="fas fa-check chip-check" aria-hidden="true"></i>
-                    <span data-i18n="filter_user_apps">User Apps</span>
-                </button>
-                <button type="button" class="filter-chip flex-1" data-filter="system" aria-pressed="false">
-                    <i class="fas fa-check chip-check" aria-hidden="true"></i>
-                    <span data-i18n="filter_system_apps">System Apps</span>
-                </button>
-                <button type="button" id="sort-btn"
-                    class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant active:scale-95 transition-transform"
-                    data-i18n-title="sort_label" title="Sort">
-                    <i class="fas fa-arrow-down-wide-short text-sm"></i>
-                </button>
+            <div id="apps-scroll" class="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+                <div id="apps-list" class="mt-2 space-y-2"></div>
+                <p id="apps-empty" class="hidden mt-8 text-center text-sm text-on-surface-variant" data-i18n="no_apps_found">
+                    No apps match your filters.
+                </p>
             </div>
-
-            <div class="mt-3 flex items-center gap-3">
-                <button type="button" id="block-all-btn" data-i18n="block_all"
-                    class="flex-1 rounded-full border border-outline-variant px-4 py-2.5 text-sm font-medium text-on-surface transition-transform duration-150 active:scale-95">
-                    Block All
-                </button>
-                <button type="button" id="unblock-all-btn" data-i18n="unblock_all"
-                    class="flex-1 rounded-full bg-secondary-container px-4 py-2.5 text-sm font-medium text-on-secondary-container transition-transform duration-150 active:scale-95">
-                    Unblock All
-                </button>
-            </div>
-
-            <div class="mt-6 flex items-center justify-between px-1">
-                <span data-i18n="apps_list_title" class="text-xs font-medium uppercase tracking-wide text-on-surface-variant">
-                    Applications
-                </span>
-                <span class="flex items-center gap-3 text-xs text-on-surface-variant">
-                    <span title="Wi-Fi"><i class="fas fa-wifi mr-1"></i><span data-i18n="wifi_label">Wi-Fi</span></span>
-                    <span title="Mobile data"><i class="fas fa-signal mr-1"></i><span data-i18n="mobile_label">Data</span></span>
-                    <span title="Domains"><i class="fas fa-globe mr-1"></i><span data-i18n="domains_label">Domains</span></span>
-                </span>
-            </div>
-
-            <div id="apps-list" class="mt-2 space-y-2"></div>
-            <p id="apps-empty" class="hidden mt-8 text-center text-sm text-on-surface-variant" data-i18n="no_apps_found">
-                No apps match your filters.
-            </p>
         </section>
 
         <!-- ============================ PROFILES PAGE ============================ -->
-        <section id="page-profiles" class="page hidden px-4 pt-6 pb-28" data-page="profiles">
+        <section id="page-profiles" class="page hidden h-full overflow-y-auto px-4 pt-6 pb-6" data-page="profiles">
             <h1 class="text-4xl font-normal text-on-surface" data-i18n="profiles_page_title">Profiles</h1>
             <p class="mt-1 text-sm text-on-surface-variant" data-i18n="profiles_page_subtitle">
                 Save and switch between sets of blocked apps.
@@ -94,7 +108,7 @@
         </section>
 
         <!-- ============================ SETTINGS PAGE ============================ -->
-        <section id="page-settings" class="page hidden px-4 pt-6 pb-28" data-page="settings">
+        <section id="page-settings" class="page hidden h-full overflow-y-auto px-4 pt-6 pb-6" data-page="settings">
             <h1 class="text-4xl font-normal text-on-surface" data-i18n="settings_page_title">Settings</h1>
 
             <p class="mt-6 mb-2 px-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
@@ -186,7 +200,7 @@
     </main>
 
     <!-- ============================ BOTTOM NAVIGATION ============================ -->
-    <nav id="bottom-nav" class="fixed inset-x-0 bottom-0 z-40 bg-surface-container shadow-[0_-2px_10px_rgba(0,0,0,0.25)]">
+    <nav id="bottom-nav" class="z-40 flex-shrink-0 bg-surface-container shadow-[0_-2px_10px_rgba(0,0,0,0.25)]">
         <div class="mx-auto flex max-w-md items-stretch justify-around px-2 pt-2 pb-2">
             <button type="button" class="nav-item" data-tab="apps" aria-current="page">
                 <span class="nav-pill">
@@ -295,23 +309,6 @@
             </div>
 
             <div id="language_selection" class="mt-4 flex flex-col gap-2"></div>
-        </div>
-    </dialog>
-
-    <dialog id="sort_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
-        <div class="p-6">
-            <div class="mb-4 flex items-center justify-between">
-                <h3 data-i18n="sort_label" class="text-lg font-semibold text-on-surface">Sort</h3>
-                <button type="button" onclick="sort_modal.close()"
-                    class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
-                    <i class="fas fa-times text-sm"></i>
-                </button>
-            </div>
-            <div id="sort-options" class="flex flex-col gap-2">
-                <button type="button" class="btn sort-option" data-sort="blocked" aria-pressed="true" data-i18n="sort_blocked_first">Blocked first</button>
-                <button type="button" class="btn sort-option" data-sort="name-asc" aria-pressed="false" data-i18n="sort_name_asc">Name (A&ndash;Z)</button>
-                <button type="button" class="btn sort-option" data-sort="name-desc" aria-pressed="false" data-i18n="sort_name_desc">Name (Z&ndash;A)</button>
-            </div>
         </div>
     </dialog>
 

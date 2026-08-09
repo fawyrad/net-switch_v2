@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **REDESIGNED**: Applications page header (search, Block All/Unblock All, filter, sort, legend) is now pinned in place while the app list scrolls in its own contained region below it — matches native list UIs where the search bar never gets scrolled out of view
+- **CHANGED**: Theme palette switched from the previous warm coral/red default to a cooler lavender/indigo Material You dark palette (only affects the fallback colors used when the host doesn't inject its own dynamic color scheme — a host-provided Material You theme always takes precedence)
+- **CHANGED**: User Apps / System Apps filter chips replaced with a single compact dropdown button (All / User / System), matching the anchored-menu style of the app's own overflow menus
+- **CHANGED**: Sort moved from a centered dialog to the same anchored-dropdown style as the new filter menu
+- **CHANGED**: Block All / Unblock All, the filter dropdown, and the sort dropdown now share a single row to make room for the new filter/sort controls
+- **FIXED**: A same-specificity CSS conflict where the Apps page needed both `flex` and `hidden` simultaneously is now resolved explicitly instead of relying on Tailwind's internal utility ordering
+- **FIXED**: Closing a dropdown menu by opening a sibling one (e.g. opening Sort while Filter was open) now also resets the other trigger's `aria-expanded` state instead of just hiding its panel
+
 - **REDESIGNED**: WebUI rebuilt as a multi-page (tabbed) Material Design 3 expressive layout — Applications, Profiles, and Settings now each live on their own page with a persistent bottom navigation bar, instead of one long scrolling page
 - **NEW**: Applications page has a User Apps / System Apps filter (backed by `pm list packages -3` / `-s`) and a sort menu (blocked-first, name A–Z, name Z–A)
 - **NEW**: "Block All" / "Unblock All" now act on the currently filtered + searched app list, so you can e.g. filter to System Apps and block just those, or search "google" and block only matching apps
