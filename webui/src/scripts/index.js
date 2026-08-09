@@ -1,6 +1,11 @@
 import { exec, toast } from "kernelsu";
 import "./language.js";
+import languageNames from "../locales/languages.json";
 import "@fortawesome/fontawesome-free/css/all.min.css";
+
+/* ============================================================================
+ * Constants & shared state
+ * ==========================================================================*/
 
 const template = document.getElementById("app-template").content;
 const appsList = document.getElementById("apps-list");
@@ -8,12 +13,24 @@ const appsList = document.getElementById("apps-list");
 const configDir = "/data/adb/.config/net-switch";
 const profilesPath = `${configDir}/profiles.json`;
 const defaultConfigPath = `${configDir}/default.json`;
+const modulePropPath = "/data/adb/modules/net-switch/module.prop";
+
+const TABS = ["apps", "profiles", "settings"];
+const SPLIT_MARKER = "===NS_SPLIT===";
 
 let profiles = {};
 let currentProfile = "";
 let installedPackages = new Set();
+/** @type {Map<string, "user" | "system">} */
+let appOrigin = new Map();
 let appConfig = {};
 let currentDomainPkg = "";
+let currentFilter = "user";
+let currentSort = "blocked";
+
+/* ============================================================================
+ * Small helpers
+ * ==========================================================================*/
 
 function t(key, ...args) {
   return typeof getTranslation === "function" ? getTranslation(key, ...args) : key;
@@ -21,15 +38,6 @@ function t(key, ...args) {
 
 function shQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
-
-async function run(cmd) {
-  const { errno, stdout, stderr } = await exec(cmd);
-  if (errno !== 0) {
-    toast(t("stderr_error", stderr));
-    return undefined;
-  }
-  return stdout;
 }
 
 function showSpinner() {
@@ -40,6 +48,34 @@ function hideSpinner() {
   document.getElementById("loading-spinner")?.classList.add("hidden");
 }
 
+/**
+ * Runs a shell command through the KernelSU/APatch/Magisk exec bridge.
+ * Throws (and shows a toast) on non-zero exit so callers can safely
+ * assume the command succeeded whenever this resolves.
+ */
+async function run(cmd) {
+  const { errno, stdout, stderr } = await exec(cmd);
+  if (errno !== 0) {
+    toast(t("stderr_error", stderr));
+    const error = new Error(stderr || `Command failed (errno ${errno})`);
+    error.handled = true;
+    throw error;
+  }
+  return stdout;
+}
+
+function reportError(error) {
+  if (!error?.handled) toast(t("operation_error"), "error");
+}
+
+function emptyState() {
+  return { wifi: false, mobile: false, domains: [] };
+}
+
+/* ============================================================================
+ * Persisted default config (active profile, future prefs)
+ * ==========================================================================*/
+
 async function fetchConfig() {
   const out = await run("netswitch list --json");
   try {
@@ -47,10 +83,6 @@ async function fetchConfig() {
   } catch (e) {
     return {};
   }
-}
-
-function emptyState() {
-  return { wifi: false, mobile: false, domains: [] };
 }
 
 async function readDefaultConfig() {
@@ -70,7 +102,9 @@ async function readDefaultConfig() {
 async function writeDefaultConfig(cfg) {
   try {
     await run(`echo ${shQuote(JSON.stringify(cfg))} > ${defaultConfigPath}`);
-  } catch (e) { }
+  } catch (e) {
+    /* non-fatal: preferences are best-effort */
+  }
 }
 
 async function persistDefaultKey(key, value) {
@@ -83,15 +117,82 @@ async function loadPersistedProfile() {
   const cfg = await readDefaultConfig();
   if (cfg.currentProfile && profiles[cfg.currentProfile]) {
     await loadProfile(cfg.currentProfile);
-    const profileSelect = document.getElementById("profile-select");
-    if (profileSelect) profileSelect.value = cfg.currentProfile;
   }
 }
 
-function sortChecked() {
-  [...appsList.children]
-    .sort((a, b) => Number(b.dataset.blocked) - Number(a.dataset.blocked))
-    .forEach((node) => appsList.appendChild(node));
+/* ============================================================================
+ * Applications page: rendering, filtering, sorting
+ * ==========================================================================*/
+
+function getAppInitial(pkg) {
+  // Reverse-DNS package names are usually "<tld>.<org>.<app...>";
+  // the 2nd segment is normally the most recognizable one.
+  const segments = pkg.split(".").filter(Boolean);
+  const label = segments[1] || segments[0] || pkg;
+  const match = label.match(/[a-zA-Z]/);
+  return match ? match[0].toUpperCase() : "?";
+}
+
+function getVisiblePkgs() {
+  return [...appsList.children]
+    .filter((node) => node.style.display !== "none")
+    .map((node) => node.dataset.pkg);
+}
+
+function updateAppsNavBadge() {
+  const badge = document.getElementById("nav-badge-apps");
+  if (!badge) return;
+  const blockedCount = Object.values(appConfig).filter(
+    (s) => s.wifi || s.mobile || (s.domains && s.domains.length),
+  ).length;
+  badge.textContent = blockedCount > 99 ? "99+" : String(blockedCount);
+  badge.classList.toggle("hidden", blockedCount === 0);
+}
+
+function updateAppsSubtitle(visibleCount) {
+  const el = document.getElementById("apps-page-count");
+  if (!el) return;
+  const blockedVisible = [...appsList.children].filter(
+    (n) => n.style.display !== "none" && n.dataset.blocked === "1",
+  ).length;
+  el.textContent = t("apps_page_subtitle", visibleCount, blockedVisible);
+}
+
+function applyFilters() {
+  const query = (document.getElementById("search")?.value || "").trim().toLowerCase();
+  let visibleCount = 0;
+
+  [...appsList.children].forEach((node) => {
+    const pkg = node.dataset.pkg;
+    const origin = appOrigin.get(pkg) || "user";
+    const matchesOrigin = origin === currentFilter;
+    const matchesQuery = !query || pkg.toLowerCase().includes(query);
+    const visible = matchesOrigin && matchesQuery;
+    node.style.display = visible ? "" : "none";
+    if (visible) visibleCount++;
+  });
+
+  document.getElementById("apps-empty")?.classList.toggle("hidden", visibleCount !== 0);
+  updateAppsSubtitle(visibleCount);
+  updateAppsNavBadge();
+}
+
+function applySort() {
+  const nodes = [...appsList.children];
+  nodes.sort((a, b) => {
+    if (currentSort === "blocked") {
+      const diff = Number(b.dataset.blocked) - Number(a.dataset.blocked);
+      return diff !== 0 ? diff : a.dataset.pkg.localeCompare(b.dataset.pkg);
+    }
+    if (currentSort === "name-desc") return b.dataset.pkg.localeCompare(a.dataset.pkg);
+    return a.dataset.pkg.localeCompare(b.dataset.pkg);
+  });
+  nodes.forEach((node) => appsList.appendChild(node));
+}
+
+function refreshAppsView() {
+  applySort();
+  applyFilters();
 }
 
 function updateAppRow(el, pkg) {
@@ -99,17 +200,223 @@ function updateAppRow(el, pkg) {
   const wifiToggle = el.querySelector(".ns-toggle-wifi");
   const mobileToggle = el.querySelector(".ns-toggle-mobile");
   const domainCount = el.querySelector(".app-domain-count");
+  const domainBtn = el.querySelector(".ns-domain-btn");
+  const domainBadge = el.querySelector(".domain-badge");
 
   if (wifiToggle) wifiToggle.checked = !!state.wifi;
   if (mobileToggle) mobileToggle.checked = !!state.mobile;
   if (domainCount) {
-    domainCount.textContent = state.domains.length
-      ? t("domains_count", state.domains.length)
-      : "";
+    domainCount.textContent = state.domains.length ? t("domains_count", state.domains.length) : "";
+  }
+  if (domainBtn) domainBtn.classList.toggle("has-domains", state.domains.length > 0);
+  if (domainBadge) {
+    if (state.domains.length > 0) {
+      domainBadge.textContent = state.domains.length > 99 ? "99+" : String(state.domains.length);
+      domainBadge.classList.remove("hidden");
+    } else {
+      domainBadge.classList.add("hidden");
+    }
   }
 
   el.dataset.blocked = state.wifi || state.mobile || state.domains.length ? "1" : "0";
 }
+
+function refreshAllRows() {
+  [...appsList.children].forEach((node) => updateAppRow(node, node.dataset.pkg));
+}
+
+function populateApp(pkg) {
+  const frag = document.importNode(template, true);
+  const el = frag.firstElementChild;
+  if (!el) return;
+
+  el.dataset.pkg = pkg;
+
+  const nameElement = el.querySelector("p.truncate");
+  if (nameElement) nameElement.textContent = pkg;
+
+  const iconBtn = el.querySelector(".app-icon");
+  if (iconBtn) {
+    iconBtn.textContent = getAppInitial(pkg);
+    const palette = [
+      ["bg-primary-container", "text-on-primary-container"],
+      ["bg-secondary-container", "text-on-secondary-container"],
+      ["bg-tertiary-container", "text-on-tertiary-container"],
+    ];
+    let hash = 0;
+    for (let i = 0; i < pkg.length; i++) hash = (hash * 31 + pkg.charCodeAt(i)) >>> 0;
+    const [bg, fg] = palette[hash % palette.length];
+    iconBtn.classList.remove("bg-tertiary-container", "text-on-tertiary-container");
+    iconBtn.classList.add(bg, fg);
+  }
+
+  updateAppRow(el, pkg);
+
+  const wifiToggle = el.querySelector(".ns-toggle-wifi");
+  const mobileToggle = el.querySelector(".ns-toggle-mobile");
+  const domainBtn = el.querySelector(".ns-domain-btn");
+
+  const handleToggle = (toggle, blockCmd, unblockCmd, key) => {
+    toggle?.addEventListener("change", async () => {
+      showSpinner();
+      const previous = !toggle.checked;
+      try {
+        const cmd = toggle.checked ? blockCmd : unblockCmd;
+        await run(`netswitch ${cmd} ${shQuote(pkg)}`);
+        appConfig[pkg] = appConfig[pkg] || emptyState();
+        appConfig[pkg][key] = toggle.checked;
+        updateAppRow(el, pkg);
+        refreshAppsView();
+        toast(t("operation_completed"), "success");
+      } catch (error) {
+        toggle.checked = previous;
+        updateAppRow(el, pkg);
+        reportError(error);
+      } finally {
+        hideSpinner();
+      }
+    });
+  };
+
+  handleToggle(wifiToggle, "block-wifi", "unblock-wifi", "wifi");
+  handleToggle(mobileToggle, "block-mobile", "unblock-mobile", "mobile");
+
+  domainBtn?.addEventListener("click", () => openDomainModal(pkg));
+
+  appsList.appendChild(el);
+}
+
+async function loadApps() {
+  showSpinner();
+  try {
+    const raw = await run(
+      `pm list packages -3 | cut -d: -f2 | sort; echo '${SPLIT_MARKER}'; pm list packages -s | cut -d: -f2 | sort`,
+    );
+    const [userRaw = "", systemRaw = ""] = (raw || "").split(SPLIT_MARKER);
+
+    appOrigin = new Map();
+    userRaw
+      .split("\n")
+      .filter(Boolean)
+      .forEach((pkg) => appOrigin.set(pkg, "user"));
+    systemRaw
+      .split("\n")
+      .filter(Boolean)
+      .forEach((pkg) => appOrigin.set(pkg, "system"));
+
+    installedPackages = new Set(appOrigin.keys());
+    appConfig = await fetchConfig();
+
+    appsList.innerHTML = "";
+    for (const pkg of installedPackages) {
+      populateApp(pkg);
+    }
+    refreshAppsView();
+  } catch (error) {
+    reportError(error);
+  } finally {
+    hideSpinner();
+  }
+}
+
+async function blockAllVisible() {
+  const pkgs = getVisiblePkgs();
+  if (!pkgs.length) return;
+
+  showSpinner();
+  try {
+    await run(`netswitch block ${pkgs.map(shQuote).join(" ")}`);
+    appConfig = await fetchConfig();
+    refreshAllRows();
+    refreshAppsView();
+    toast(t("bulk_blocked", pkgs.length), "success");
+  } catch (error) {
+    reportError(error);
+  } finally {
+    hideSpinner();
+  }
+}
+
+async function unblockAllVisible() {
+  const pkgs = getVisiblePkgs();
+  if (!pkgs.length) return;
+
+  showSpinner();
+  try {
+    await run(`netswitch unblock ${pkgs.map(shQuote).join(" ")}`);
+    appConfig = await fetchConfig();
+    refreshAllRows();
+    refreshAppsView();
+    toast(t("bulk_unblocked", pkgs.length), "success");
+  } catch (error) {
+    reportError(error);
+  } finally {
+    hideSpinner();
+  }
+}
+
+/** Fully clears the Wi-Fi/mobile block lists for every installed app (keeps custom domains). */
+async function unblockEverything() {
+  showSpinner();
+  try {
+    await run("netswitch set-wifi");
+    await run("netswitch set-mobile");
+    appConfig = await fetchConfig();
+    refreshAllRows();
+    refreshAppsView();
+
+    currentProfile = "";
+    await persistDefaultKey("currentProfile", "");
+    renderProfilesList();
+
+    toast(t("all_apps_connected"), "success");
+  } catch (error) {
+    reportError(error);
+  } finally {
+    hideSpinner();
+  }
+}
+
+function setupSearch() {
+  document.getElementById("search")?.addEventListener("input", () => applyFilters());
+}
+
+function setupFilters() {
+  const chips = [...document.querySelectorAll(".filter-chip")];
+  chips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      currentFilter = chip.dataset.filter;
+      chips.forEach((c) => c.setAttribute("aria-pressed", c === chip ? "true" : "false"));
+      applyFilters();
+    });
+  });
+}
+
+function setupSort() {
+  const sortBtn = document.getElementById("sort-btn");
+  const modal = document.getElementById("sort_modal");
+  const options = [...document.querySelectorAll(".sort-option")];
+  if (!sortBtn || !modal) return;
+
+  sortBtn.addEventListener("click", () => modal.showModal());
+  options.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      currentSort = btn.dataset.sort;
+      options.forEach((o) => o.setAttribute("aria-pressed", o === btn ? "true" : "false"));
+      applySort();
+      modal.close();
+    });
+  });
+}
+
+function setupBulkActions() {
+  document.getElementById("block-all-btn")?.addEventListener("click", blockAllVisible);
+  document.getElementById("unblock-all-btn")?.addEventListener("click", unblockAllVisible);
+}
+
+/* ============================================================================
+ * Domain (per-app) blocking modal
+ * ==========================================================================*/
 
 function renderDomainChips(pkg) {
   const listEl = document.getElementById("domain-list");
@@ -126,6 +433,7 @@ function renderDomainChips(pkg) {
     const label = document.createElement("span");
     label.textContent = entry;
     const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
     removeBtn.innerHTML = '<i class="fas fa-times" style="font-size:8px"></i>';
     removeBtn.addEventListener("click", () => removeDomain(pkg, entry));
     chip.appendChild(label);
@@ -141,6 +449,12 @@ async function refreshDomainsFor(pkg) {
   return domains;
 }
 
+function refreshAppRowFor(pkg) {
+  const row = appsList.querySelector(`[data-pkg="${CSS.escape(pkg)}"]`);
+  if (row) updateAppRow(row, pkg);
+  refreshAppsView();
+}
+
 async function addDomain(pkg, entry) {
   if (!entry) return;
   showSpinner();
@@ -148,11 +462,10 @@ async function addDomain(pkg, entry) {
     await run(`netswitch domain-add ${shQuote(pkg)} ${shQuote(entry)}`);
     await refreshDomainsFor(pkg);
     renderDomainChips(pkg);
-    const row = appsList.querySelector(`[data-pkg="${CSS.escape(pkg)}"]`);
-    if (row) updateAppRow(row, pkg);
+    refreshAppRowFor(pkg);
     toast(t("domain_added", entry), "success");
-  } catch (e) {
-    toast(t("operation_error"), "error");
+  } catch (error) {
+    reportError(error);
   } finally {
     hideSpinner();
   }
@@ -164,11 +477,10 @@ async function removeDomain(pkg, entry) {
     await run(`netswitch domain-remove ${shQuote(pkg)} ${shQuote(entry)}`);
     await refreshDomainsFor(pkg);
     renderDomainChips(pkg);
-    const row = appsList.querySelector(`[data-pkg="${CSS.escape(pkg)}"]`);
-    if (row) updateAppRow(row, pkg);
+    refreshAppRowFor(pkg);
     toast(t("domain_removed", entry), "success");
-  } catch (e) {
-    toast(t("operation_error"), "error");
+  } catch (error) {
+    reportError(error);
   } finally {
     hideSpinner();
   }
@@ -202,100 +514,113 @@ function setupDomainModal() {
   });
 }
 
-function populateApp(pkg) {
-  const frag = document.importNode(template, true);
-  const el = frag.firstElementChild;
-  if (!el) return;
+/* ============================================================================
+ * Profiles page
+ * ==========================================================================*/
 
-  el.dataset.pkg = pkg;
+function createProfileRow({ isNone, name, count, isActive }) {
+  const row = document.createElement(isNone ? "button" : "div");
+  row.className =
+    "profile-row flex w-full items-center gap-3 rounded-2xl bg-surface-container-high p-3" +
+    (isNone ? " text-left" : "");
+  if (isNone) row.type = "button";
 
-  const nameElement = el.querySelector("p.truncate");
-  if (nameElement) nameElement.textContent = pkg;
+  const iconWrap = document.createElement("div");
+  iconWrap.className = `flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${
+    isNone ? "bg-surface-container-highest" : isActive ? "bg-primary-container" : "bg-tertiary-container"
+  }`;
+  const icon = document.createElement("i");
+  icon.className = `fas ${isNone ? "fa-ban" : "fa-user-shield"} text-sm ${
+    isNone ? "text-on-surface-variant" : isActive ? "text-on-primary-container" : "text-on-tertiary-container"
+  }`;
+  iconWrap.appendChild(icon);
 
-  const iconBtn = el.querySelector(".app-icon");
-  if (iconBtn) {
-    iconBtn.textContent = pkg.replace(/^[^a-zA-Z]*/, "").charAt(0).toUpperCase() || "?";
-    const palette = [
-      ["bg-primary-container", "text-on-primary-container"],
-      ["bg-secondary-container", "text-on-secondary-container"],
-      ["bg-tertiary-container", "text-on-tertiary-container"],
-    ];
-    let hash = 0;
-    for (let i = 0; i < pkg.length; i++) hash = (hash * 31 + pkg.charCodeAt(i)) >>> 0;
-    const [bg, fg] = palette[hash % palette.length];
-    iconBtn.classList.remove("bg-tertiary-container", "text-on-tertiary-container");
-    iconBtn.classList.add(bg, fg);
+  const textWrap = document.createElement("div");
+  textWrap.className = "min-w-0 flex-1";
+  const title = document.createElement("p");
+  title.className = "truncate text-sm font-medium text-on-surface";
+  title.textContent = isNone ? t("profile_none_label") : name;
+  const subtitle = document.createElement("p");
+  subtitle.className = "truncate text-xs text-on-surface-variant";
+  subtitle.textContent = isNone ? t("profile_none_desc") : t("profile_apps_count", count);
+  textWrap.append(title, subtitle);
+
+  if (isNone) {
+    row.append(iconWrap, textWrap);
+    if (isActive) {
+      const check = document.createElement("i");
+      check.className = "fas fa-circle-check text-sm text-primary";
+      row.appendChild(check);
+    }
+    row.addEventListener("click", () => unblockEverything());
+    return row;
   }
 
-  updateAppRow(el, pkg);
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "flex min-w-0 flex-1 items-center gap-3 text-left";
+  applyBtn.append(iconWrap, textWrap);
+  applyBtn.addEventListener("click", () => loadProfile(name));
+  row.appendChild(applyBtn);
 
-  const wifiToggle = el.querySelector(".ns-toggle-wifi");
-  const mobileToggle = el.querySelector(".ns-toggle-mobile");
-  const domainBtn = el.querySelector(".ns-domain-btn");
+  if (isActive) {
+    const check = document.createElement("i");
+    check.className = "fas fa-circle-check mr-1 text-sm text-primary";
+    row.appendChild(check);
+  }
 
-  const handleToggle = (toggle, blockCmd, unblockCmd, key) => {
-    toggle?.addEventListener("change", async () => {
-      showSpinner();
-      const previous = !toggle.checked;
-      try {
-        const cmd = toggle.checked ? blockCmd : unblockCmd;
-        await run(`netswitch ${cmd} ${shQuote(pkg)}`);
-        appConfig[pkg] = appConfig[pkg] || emptyState();
-        appConfig[pkg][key] = toggle.checked;
-        updateAppRow(el, pkg);
-        sortChecked();
-        toast(t("operation_completed"), "success");
-      } catch (error) {
-        toggle.checked = previous;
-        updateAppRow(el, pkg);
-        toast(t("operation_error"), "error");
-      } finally {
-        hideSpinner();
-      }
-    });
-  };
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className =
+    "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-error hover:bg-error-container/30";
+  deleteBtn.setAttribute("aria-label", "Delete profile");
+  const trashIcon = document.createElement("i");
+  trashIcon.className = "fas fa-trash text-xs";
+  deleteBtn.appendChild(trashIcon);
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteProfile(name);
+  });
+  row.appendChild(deleteBtn);
 
-  handleToggle(wifiToggle, "block-wifi", "unblock-wifi", "wifi");
-  handleToggle(mobileToggle, "block-mobile", "unblock-mobile", "mobile");
+  return row;
+}
 
-  domainBtn?.addEventListener("click", () => openDomainModal(pkg));
+function renderProfilesList() {
+  const container = document.getElementById("profiles-list");
+  if (!container) return;
+  container.innerHTML = "";
 
-  appsList.appendChild(el);
+  container.appendChild(createProfileRow({ isNone: true, isActive: currentProfile === "" }));
+
+  Object.keys(profiles).forEach((name) => {
+    const profile = profiles[name];
+    const count = (profile?.wifi?.length || 0) + (profile?.mobile?.length || 0);
+    container.appendChild(
+      createProfileRow({ isNone: false, name, count, isActive: name === currentProfile }),
+    );
+  });
+
+  const badge = document.getElementById("nav-badge-profiles");
+  if (badge) {
+    const n = Object.keys(profiles).length;
+    badge.textContent = n > 99 ? "99+" : String(n);
+    badge.classList.toggle("hidden", n === 0);
+  }
 }
 
 async function loadProfiles() {
   try {
     const profilesData = await run(`cat ${profilesPath} 2>/dev/null || echo '{}'`);
     profiles = profilesData ? JSON.parse(profilesData) : {};
-    updateProfileSelect();
   } catch (error) {
     profiles = {};
   }
+  renderProfilesList();
 }
 
 async function saveProfiles() {
   await run(`echo ${shQuote(JSON.stringify(profiles))} > ${profilesPath}`);
-}
-
-function updateProfileSelect() {
-  const profileSelect = document.getElementById("profile-select");
-  if (!profileSelect) return;
-
-  profileSelect.innerHTML = "";
-
-  const placeholderOption = document.createElement("option");
-  placeholderOption.value = "";
-  placeholderOption.textContent = t("select_profile");
-  profileSelect.appendChild(placeholderOption);
-
-  Object.keys(profiles).forEach((profileName) => {
-    const option = document.createElement("option");
-    option.value = profileName;
-    const count = (profiles[profileName]?.wifi?.length || 0) + (profiles[profileName]?.mobile?.length || 0);
-    option.textContent = `${profileName} (${count})`;
-    if (profileName === currentProfile) option.selected = true;
-    profileSelect.appendChild(option);
-  });
 }
 
 async function loadProfile(profileName) {
@@ -314,15 +639,16 @@ async function loadProfile(profileName) {
     await run(`netswitch set-mobile ${mobilePkgs.map(shQuote).join(" ")}`.trim());
 
     appConfig = await fetchConfig();
-    [...appsList.children].forEach((node) => updateAppRow(node, node.dataset.pkg));
-    sortChecked();
+    refreshAllRows();
+    refreshAppsView();
 
     currentProfile = profileName;
     await persistDefaultKey("currentProfile", currentProfile);
+    renderProfilesList();
 
     toast(t("profile_activated", profileName, wifiPkgs.length + mobilePkgs.length), "success");
   } catch (error) {
-    toast(t("operation_error"), "error");
+    reportError(error);
   } finally {
     hideSpinner();
   }
@@ -339,14 +665,21 @@ function collectCurrentSelection() {
 }
 
 async function saveCurrentProfile(profileName) {
-  profiles[profileName] = collectCurrentSelection();
-  await saveProfiles();
-  currentProfile = profileName;
-  updateProfileSelect();
-  await persistDefaultKey("currentProfile", currentProfile);
+  showSpinner();
+  try {
+    profiles[profileName] = collectCurrentSelection();
+    await saveProfiles();
+    currentProfile = profileName;
+    await persistDefaultKey("currentProfile", currentProfile);
+    renderProfilesList();
 
-  const total = profiles[profileName].wifi.length + profiles[profileName].mobile.length;
-  toast(t("profile_created", profileName, total), "success");
+    const total = profiles[profileName].wifi.length + profiles[profileName].mobile.length;
+    toast(t("profile_created", profileName, total), "success");
+  } catch (error) {
+    reportError(error);
+  } finally {
+    hideSpinner();
+  }
 }
 
 async function deleteProfile(profileName) {
@@ -355,81 +688,58 @@ async function deleteProfile(profileName) {
     return;
   }
 
-  delete profiles[profileName];
-  await saveProfiles();
-
-  if (currentProfile === profileName) {
-    currentProfile = "";
-    await persistDefaultKey("currentProfile", "");
-  }
-
-  updateProfileSelect();
-  toast(t("profile_deleted", profileName), "success");
-}
-
-async function loadApps() {
   showSpinner();
   try {
-    const packages = await run("pm list packages | cut -d: -f2 | sort");
-    if (!packages) return;
+    delete profiles[profileName];
+    await saveProfiles();
 
-    installedPackages = new Set(packages.split("\n").filter(Boolean));
-    appConfig = await fetchConfig();
-
-    appsList.innerHTML = "";
-    for (const pkg of installedPackages) {
-      populateApp(pkg);
+    if (currentProfile === profileName) {
+      currentProfile = "";
+      await persistDefaultKey("currentProfile", "");
     }
-    sortChecked();
+
+    renderProfilesList();
+    toast(t("profile_deleted", profileName), "success");
   } catch (error) {
-    toast(t("operation_error"), "error");
+    reportError(error);
   } finally {
     hideSpinner();
   }
 }
 
-async function connectAllApps() {
-  showSpinner();
-  try {
-    await run("netswitch set-wifi");
-    await run("netswitch set-mobile");
-    appConfig = await fetchConfig();
-    [...appsList.children].forEach((node) => updateAppRow(node, node.dataset.pkg));
-    sortChecked();
+function setupProfilesPage() {
+  const createProfileBtn = document.getElementById("create-profile");
+  const nameInput = document.getElementById("new-profile-name");
 
-    currentProfile = "";
-    await persistDefaultKey("currentProfile", "");
-    updateProfileSelect();
+  const submit = async () => {
+    const name = nameInput?.value.trim();
+    if (!name) {
+      toast(t("enter_profile_name"), "error");
+      return;
+    }
+    if (profiles[name]) {
+      toast(t("profile_exists"), "error");
+      return;
+    }
+    await saveCurrentProfile(name);
+    if (nameInput) nameInput.value = "";
+  };
 
-    toast(t("all_apps_connected"), "success");
-  } catch (error) {
-    toast(t("operation_error"), "error");
-  } finally {
-    hideSpinner();
-  }
-}
-
-function setupSearch() {
-  const searchInput = document.getElementById("search");
-  if (!searchInput) return;
-
-  searchInput.addEventListener("input", (e) => {
-    const query = e.target.value.toLowerCase();
-    [...appsList.children].forEach((node) => {
-      const appName = node.querySelector("p.truncate")?.textContent?.toLowerCase();
-      const matches = !query || (appName && appName.includes(query));
-      node.style.display = matches ? "" : "none";
-    });
+  createProfileBtn?.addEventListener("click", submit);
+  nameInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
   });
 }
+
+/* ============================================================================
+ * Settings page
+ * ==========================================================================*/
 
 function updateIoTexts() {
   const mode = document.getElementById("io-mode-select")?.value;
   const pathLabel = document.getElementById("io-path-label");
   const pathDesc = document.getElementById("io-desc");
-  const actionBtn = document.getElementById("io-action-btn");
-
-  if (!mode || !pathLabel || !pathDesc || !actionBtn) return;
+  if (!mode || !pathLabel || !pathDesc) return;
 
   if (mode === "export") {
     pathLabel.textContent = t("destination_path");
@@ -438,31 +748,15 @@ function updateIoTexts() {
     pathLabel.textContent = t("source_path");
     pathDesc.textContent = t("import_desc");
   }
-  actionBtn.textContent = t("run");
 }
 
 function setupImportExport() {
-  const openIoBtn = document.getElementById("open-io-page");
-  const ioBackBtn = document.getElementById("io-back-btn");
   const ioActionBtn = document.getElementById("io-action-btn");
   const ioModeSelect = document.getElementById("io-mode-select");
-  const homePage = document.getElementById("home-page");
-  const ioPage = document.getElementById("io-page");
-
-  if (!openIoBtn || !ioBackBtn || !ioActionBtn || !ioModeSelect || !homePage || !ioPage) return;
-
-  openIoBtn.addEventListener("click", () => {
-    homePage.classList.add("hidden");
-    ioPage.classList.remove("hidden");
-    updateIoTexts();
-  });
-
-  ioBackBtn.addEventListener("click", () => {
-    ioPage.classList.add("hidden");
-    homePage.classList.remove("hidden");
-  });
+  if (!ioActionBtn || !ioModeSelect) return;
 
   ioModeSelect.addEventListener("change", updateIoTexts);
+  updateIoTexts();
 
   ioActionBtn.addEventListener("click", async () => {
     const mode = ioModeSelect.value;
@@ -473,6 +767,7 @@ function setupImportExport() {
       return;
     }
 
+    showSpinner();
     try {
       if (mode === "export") {
         const exportResult = await exec(`cp ${profilesPath} ${shQuote(path)}`);
@@ -494,60 +789,141 @@ function setupImportExport() {
         toast(t("import_success"), "success");
       }
     } catch (error) {
-      const isExport = mode === "export";
-      toast(`${t(isExport ? "export_failed" : "import_failed")}: ${error.message}`, "error");
+      if (!error?.handled) {
+        const isExport = mode === "export";
+        toast(`${t(isExport ? "export_failed" : "import_failed")}: ${error.message}`, "error");
+      }
+    } finally {
+      hideSpinner();
     }
   });
 }
 
+function setupResetAll() {
+  const resetBtn = document.getElementById("reset-all-btn");
+  const modal = document.getElementById("confirm_reset_modal");
+  const cancelBtn = document.getElementById("cancel-reset-btn");
+  const confirmBtn = document.getElementById("confirm-reset-btn");
+  if (!resetBtn || !modal || !cancelBtn || !confirmBtn) return;
+
+  resetBtn.addEventListener("click", () => modal.showModal());
+  cancelBtn.addEventListener("click", () => modal.close());
+
+  confirmBtn.addEventListener("click", async () => {
+    modal.close();
+    showSpinner();
+    try {
+      await run("netswitch reset");
+      appConfig = {};
+      refreshAllRows();
+      refreshAppsView();
+
+      currentProfile = "";
+      await persistDefaultKey("currentProfile", "");
+      renderProfilesList();
+
+      toast(t("settings_reset_success"), "success");
+    } catch (error) {
+      reportError(error);
+    } finally {
+      hideSpinner();
+    }
+  });
+}
+
+async function loadAboutInfo() {
+  const el = document.getElementById("about-version");
+  if (!el) return;
+  try {
+    const out = await run(`cat ${modulePropPath} 2>/dev/null || true`);
+    const props = {};
+    (out || "").split("\n").forEach((line) => {
+      const idx = line.indexOf("=");
+      if (idx > 0) props[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    });
+    if (props.version) {
+      el.textContent = t("about_version_label", props.version, props.versionCode || "");
+    }
+  } catch (error) {
+    /* non-critical: leave placeholder text */
+  }
+}
+
+function setupLanguageLabelSync() {
+  const label = document.getElementById("current-language-label");
+  if (!label) return;
+
+  const allLanguages = { en: "English", ...languageNames };
+
+  // Resolve synchronously from storage first so the label is correct even
+  // if this runs before language.js dispatches its change event.
+  try {
+    const saved = localStorage.getItem("selectedLanguage") || "en";
+    label.textContent = allLanguages[saved] || saved;
+  } catch (e) {
+    /* localStorage may be unavailable in some WebView sandboxes */
+  }
+
+  window.addEventListener("ns:languagechange", (e) => {
+    if (e.detail?.label) label.textContent = e.detail.label;
+  });
+}
+
+/* ============================================================================
+ * Tab navigation
+ * ==========================================================================*/
+
+function switchTab(tab) {
+  if (!TABS.includes(tab)) tab = "apps";
+
+  TABS.forEach((name) => {
+    document.getElementById(`page-${name}`)?.classList.toggle("hidden", name !== tab);
+  });
+
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    if (btn.dataset.tab === tab) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+
+  try {
+    localStorage.setItem("activeTab", tab);
+  } catch (e) {
+    /* localStorage may be unavailable in some WebView sandboxes */
+  }
+}
+
+function setupTabs() {
+  document.querySelectorAll(".nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+
+  let initial = "apps";
+  try {
+    const saved = localStorage.getItem("activeTab");
+    if (saved && TABS.includes(saved)) initial = saved;
+  } catch (e) {
+    /* ignore */
+  }
+  switchTab(initial);
+}
+
+/* ============================================================================
+ * Bootstrap
+ * ==========================================================================*/
+
 document.addEventListener("DOMContentLoaded", async () => {
-  await loadProfiles();
-  await loadApps();
-  await loadPersistedProfile();
+  setupTabs();
   setupSearch();
-  setupImportExport();
+  setupFilters();
+  setupSort();
+  setupBulkActions();
   setupDomainModal();
+  setupProfilesPage();
+  setupImportExport();
+  setupResetAll();
+  setupLanguageLabelSync();
 
-  document.getElementById("connect-all")?.addEventListener("click", connectAllApps);
-
-  const profileSelect = document.getElementById("profile-select");
-  const createProfileBtn = document.getElementById("create-profile");
-  const deleteProfileBtn = document.getElementById("delete-profile");
-
-  profileSelect?.addEventListener("change", (e) => {
-    if (e.target.value) {
-      loadProfile(e.target.value);
-    } else {
-      connectAllApps();
-    }
-  });
-
-  createProfileBtn?.addEventListener("click", async () => {
-    const nameInput = document.getElementById("new-profile-name");
-    const name = nameInput?.value.trim();
-
-    if (!name) {
-      toast(t("enter_profile_name"), "error");
-      return;
-    }
-    if (profiles[name]) {
-      toast(t("profile_exists"), "error");
-      return;
-    }
-
-    await saveCurrentProfile(name);
-    if (nameInput) nameInput.value = "";
-  });
-
-  deleteProfileBtn?.addEventListener("click", async (e) => {
-    e.preventDefault();
-    const selectedProfile = document.getElementById("profile-select").value;
-    const profileToDelete = selectedProfile || currentProfile;
-
-    if (!profileToDelete) {
-      toast(t("select_profile_to_delete"), "error");
-      return;
-    }
-    await deleteProfile(profileToDelete);
-  });
+  await Promise.all([loadProfiles(), loadApps()]);
+  await loadPersistedProfile();
+  await loadAboutInfo();
 });

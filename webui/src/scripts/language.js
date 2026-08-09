@@ -90,58 +90,51 @@ async function loadTranslations(lang) {
   }
 }
 
+// Resolves a (possibly nested, e.g. "some.section.key") translation key
+// against the given translation table, falling back to English.
+function resolveKey(key, translations) {
+  const keys = key.split(".");
+
+  let value = translations;
+  for (const k of keys) {
+    value = value?.[k];
+    if (value === undefined) break;
+  }
+  if (value !== undefined) return value;
+
+  value = cachedEnglishTranslations;
+  for (const k of keys) {
+    value = value?.[k];
+    if (value === undefined) break;
+  }
+  return value;
+}
+
 function applyTranslations(translations) {
   // Text content translation
   document.querySelectorAll("[data-i18n]").forEach((el) => {
-    const keys = el.getAttribute("data-i18n").split(".");
-    let value = translations;
-
-    for (const key of keys) {
-      value = value?.[key];
-      if (value === undefined) break;
-    }
-
-    if (value !== undefined) {
-      el.textContent = value;
-    }
+    const value = resolveKey(el.getAttribute("data-i18n"), translations);
+    if (value !== undefined) el.textContent = value;
   });
 
   // Placeholder translation for inputs/textareas/selects
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
     const key = el.getAttribute("data-i18n-placeholder");
     if (!key) return;
+    const value = resolveKey(key, translations);
+    if (value === undefined || typeof value !== "string") return;
 
-    // Support nested keys like 'some.section.key'
-    const keys = key.split(".");
-    let value = translations;
-    for (const k of keys) {
-      value = value?.[k];
-      if (value === undefined) break;
-    }
-
-    // Fallback to English if not found
-    if (value === undefined) {
-      value = cachedEnglishTranslations;
-      for (const k of keys) {
-        value = value?.[k];
-        if (value === undefined) break;
-      }
-    }
-
-    if (value !== undefined && typeof value === "string") {
-      // If element is an input-like, set placeholder or value accordingly
-      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
-        // For inputs of type button/submit use value, otherwise placeholder
-        const type = (el.getAttribute("type") || "").toLowerCase();
-        if (type === "button" || type === "submit") {
-          el.value = value;
-        } else {
-          el.setAttribute("placeholder", value);
-        }
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      // For inputs of type button/submit use value, otherwise placeholder
+      const type = (el.getAttribute("type") || "").toLowerCase();
+      if (type === "button" || type === "submit") {
+        el.value = value;
       } else {
-        // Generic fallback: set attribute placeholder
         el.setAttribute("placeholder", value);
       }
+    } else {
+      // Generic fallback: set attribute placeholder
+      el.setAttribute("placeholder", value);
     }
   });
 
@@ -149,23 +142,21 @@ function applyTranslations(translations) {
   document.querySelectorAll("[data-i18n-value]").forEach((el) => {
     const key = el.getAttribute("data-i18n-value");
     if (!key) return;
-    const keys = key.split(".");
-    let value = translations;
-    for (const k of keys) {
-      value = value?.[k];
-      if (value === undefined) break;
-    }
-    if (value === undefined) {
-      value = cachedEnglishTranslations;
-      for (const k of keys) {
-        value = value?.[k];
-        if (value === undefined) break;
-      }
-    }
+    const value = resolveKey(key, translations);
+    if (value === undefined || typeof value !== "string") return;
+
+    el.value = value;
+    // For buttons, also set textContent for consistency
+    if (el.tagName === "BUTTON") el.textContent = value;
+  });
+
+  // Title/tooltip translation (e.g. icon-only buttons)
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-title");
+    if (!key) return;
+    const value = resolveKey(key, translations);
     if (value !== undefined && typeof value === "string") {
-      el.value = value;
-      // For buttons, also set textContent for consistency
-      if (el.tagName === "BUTTON") el.textContent = value;
+      el.setAttribute("title", value);
     }
   });
 }
@@ -221,6 +212,15 @@ async function initI18n() {
     currentTranslations = await loadTranslations(lang);
     applyTranslations(currentTranslations);
 
+    // Reflect the active language in the selection modal and notify
+    // any listeners (e.g. the Settings page) of the current language.
+    languageSelection.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-pressed", b.dataset.lang === lang ? "true" : "false");
+    });
+    window.dispatchEvent(
+      new CustomEvent("ns:languagechange", { detail: { lang, label: allLanguages[lang] || lang } }),
+    );
+
     // Handle settings button click
     languageBtn.addEventListener("click", () => {
       document.documentElement.classList.add("modal-open");
@@ -243,6 +243,11 @@ async function initI18n() {
         currentTranslations = await loadTranslations(newLang);
         applyTranslations(currentTranslations);
         localStorage.setItem("selectedLanguage", newLang);
+        window.dispatchEvent(
+          new CustomEvent("ns:languagechange", {
+            detail: { lang: newLang, label: allLanguages[newLang] || newLang },
+          }),
+        );
         languageModal.close();
         document.documentElement.classList.remove("modal-open");
       } catch (error) {

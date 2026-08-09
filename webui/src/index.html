@@ -5,195 +5,257 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link href="styles/index.css" type="text/css" rel="stylesheet" />
-    <script type="module" src="scripts/index.js" type="text/javascript"></script>
-    <script type="module" src="scripts/mmrl.js" type="text/javascript"></script>
+    <script type="module" src="scripts/index.js"></script>
+    <script type="module" src="scripts/mmrl.js"></script>
 </head>
 
 <body class="root_layout min-h-screen bg-surface text-on-surface">
-    <div class="sticky top-0 z-40 rounded-b-3xl bg-surface-container shadow-md">
-        <div class="px-4 py-3">
-            <div class="flex items-center justify-between w-full">
-                <div class="flex items-center space-x-3">
-                    <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-primary-container">
-                        <i class="fas fa-network-wired text-sm text-on-primary-container"></i>
-                    </div>
-                    <div>
-                        <h1 data-i18n="title" class="text-lg font-semibold text-on-surface">Net Switch</h1>
-                        <p data-i18n="subtitle" class="text-xs text-on-surface-variant">App Isolation Manager</p>
-                    </div>
-                </div>
-                <button id="language_btn"
-                    class="flex h-10 w-10 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high"
-                    title="Select Language">
-                    <i class="fas fa-globe text-sm"></i>
-                </button>
-            </div>
-        </div>
-    </div>
+    <main id="app-main">
 
-    <div id="home-page" class="pb-8">
-        <div class="mx-3 mt-4 flex items-center gap-3">
-            <button id="open-io-page" data-i18n="backup_manager"
-                class="flex-1 rounded-full bg-secondary-container px-4 py-2.5 text-sm font-medium text-on-secondary-container shadow-sm transition-transform duration-150 active:scale-95">
-                Backup Manager
-            </button>
-            <button id="connect-all"
-                class="flex-1 rounded-full border border-outline-variant px-4 py-2.5 text-sm font-medium text-on-surface transition-transform duration-150 active:scale-95"
-                data-i18n="unblock_all">
-                Unblock All
-            </button>
-        </div>
+        <!-- ============================= APPS PAGE ============================= -->
+        <section id="page-apps" class="page px-4 pt-6 pb-28" data-page="apps">
+            <h1 class="text-4xl font-normal text-on-surface" data-i18n="apps_page_title">Applications</h1>
+            <p id="apps-page-count" class="mt-1 text-sm text-on-surface-variant">&nbsp;</p>
 
-        <div class="mx-3 mt-4 rounded-3xl bg-surface-container-low p-4 shadow-sm">
-            <div class="mb-3 flex items-center space-x-2">
-                <div class="flex h-7 w-7 items-center justify-center rounded-xl bg-tertiary-container">
-                    <i class="fas fa-user-cog text-xs text-on-tertiary-container"></i>
-                </div>
-                <h2 data-i18n="profiles_title" class="text-base font-semibold text-on-surface">Profile Management</h2>
-            </div>
-
-            <div class="space-y-3">
-                <div class="rounded-2xl bg-surface-container-high p-3">
-                    <div class="flex items-center space-x-2">
-                        <div class="relative flex-grow">
-                            <i class="fas fa-users absolute top-1/2 left-3 -translate-y-1/2 transform text-xs text-on-surface-variant"></i>
-                            <select id="profile-select"
-                                class="w-full rounded-full border-none bg-surface py-2 pr-3 pl-8 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none">
-                                <option value="" data-i18n="select_profile">Select Profile</option>
-                            </select>
-                        </div>
-                        <button id="delete-profile"
-                            class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-error-container text-on-error-container">
-                            <i class="fas fa-trash text-xs"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <div class="rounded-2xl bg-surface-container-high p-3">
-                    <div class="flex space-x-2">
-                        <div class="relative flex-1">
-                            <i class="fas fa-plus-circle absolute top-1/2 left-3 -translate-y-1/2 transform text-xs text-on-surface-variant"></i>
-                            <input type="text" id="new-profile-name" data-i18n-placeholder="new_profile_placeholder"
-                                placeholder="New profile name"
-                                class="w-full rounded-full border-none bg-surface py-2 pr-3 pl-8 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none" />
-                        </div>
-                        <button id="create-profile"
-                            class="flex-shrink-0 rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary">
-                            <i class="fas fa-magic mr-1 text-xs"></i><span data-i18n="create">Create</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="mx-3 mt-4">
-            <div class="relative">
+            <div class="mt-4 relative">
                 <i class="fas fa-search absolute top-1/2 left-4 -translate-y-1/2 transform text-sm text-on-surface-variant"></i>
                 <input type="search" id="search" data-i18n-placeholder="search_placeholder"
                     placeholder="Search apps by name..."
                     class="w-full rounded-full bg-surface-container-high py-3 pr-4 pl-11 text-sm text-on-surface shadow-sm focus:ring-2 focus:ring-primary focus:outline-none" />
             </div>
-        </div>
 
-        <div class="mx-3 mt-4 mb-6">
-            <div class="rounded-3xl bg-surface-container-low p-4 shadow-sm">
-                <div class="mb-3 flex items-center justify-between">
-                    <div class="flex items-center space-x-2">
-                        <div class="flex h-7 w-7 items-center justify-center rounded-xl bg-primary-container">
-                            <i class="fas fa-mobile-alt text-xs text-on-primary-container"></i>
-                        </div>
-                        <h2 data-i18n="apps_list_title" class="text-base font-semibold text-on-surface">Applications List</h2>
+            <div class="mt-3 flex items-center gap-2">
+                <button type="button" class="filter-chip flex-1" data-filter="user" aria-pressed="true">
+                    <i class="fas fa-check chip-check" aria-hidden="true"></i>
+                    <span data-i18n="filter_user_apps">User Apps</span>
+                </button>
+                <button type="button" class="filter-chip flex-1" data-filter="system" aria-pressed="false">
+                    <i class="fas fa-check chip-check" aria-hidden="true"></i>
+                    <span data-i18n="filter_system_apps">System Apps</span>
+                </button>
+                <button type="button" id="sort-btn"
+                    class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-surface-container-high text-on-surface-variant active:scale-95 transition-transform"
+                    data-i18n-title="sort_label" title="Sort">
+                    <i class="fas fa-arrow-down-wide-short text-sm"></i>
+                </button>
+            </div>
+
+            <div class="mt-3 flex items-center gap-3">
+                <button type="button" id="block-all-btn" data-i18n="block_all"
+                    class="flex-1 rounded-full border border-outline-variant px-4 py-2.5 text-sm font-medium text-on-surface transition-transform duration-150 active:scale-95">
+                    Block All
+                </button>
+                <button type="button" id="unblock-all-btn" data-i18n="unblock_all"
+                    class="flex-1 rounded-full bg-secondary-container px-4 py-2.5 text-sm font-medium text-on-secondary-container transition-transform duration-150 active:scale-95">
+                    Unblock All
+                </button>
+            </div>
+
+            <div class="mt-6 flex items-center justify-between px-1">
+                <span data-i18n="apps_list_title" class="text-xs font-medium uppercase tracking-wide text-on-surface-variant">
+                    Applications
+                </span>
+                <span class="flex items-center gap-3 text-xs text-on-surface-variant">
+                    <span title="Wi-Fi"><i class="fas fa-wifi mr-1"></i><span data-i18n="wifi_label">Wi-Fi</span></span>
+                    <span title="Mobile data"><i class="fas fa-signal mr-1"></i><span data-i18n="mobile_label">Data</span></span>
+                    <span title="Domains"><i class="fas fa-globe mr-1"></i><span data-i18n="domains_label">Domains</span></span>
+                </span>
+            </div>
+
+            <div id="apps-list" class="mt-2 space-y-2"></div>
+            <p id="apps-empty" class="hidden mt-8 text-center text-sm text-on-surface-variant" data-i18n="no_apps_found">
+                No apps match your filters.
+            </p>
+        </section>
+
+        <!-- ============================ PROFILES PAGE ============================ -->
+        <section id="page-profiles" class="page hidden px-4 pt-6 pb-28" data-page="profiles">
+            <h1 class="text-4xl font-normal text-on-surface" data-i18n="profiles_page_title">Profiles</h1>
+            <p class="mt-1 text-sm text-on-surface-variant" data-i18n="profiles_page_subtitle">
+                Save and switch between sets of blocked apps.
+            </p>
+
+            <div class="mt-5 rounded-3xl bg-surface-container-low p-4 shadow-sm">
+                <div class="flex space-x-2">
+                    <div class="relative flex-1">
+                        <i class="fas fa-plus-circle absolute top-1/2 left-3 -translate-y-1/2 transform text-xs text-on-surface-variant"></i>
+                        <input type="text" id="new-profile-name" data-i18n-placeholder="new_profile_placeholder"
+                            placeholder="New profile name"
+                            class="w-full rounded-full border-none bg-surface-container-high py-2.5 pr-3 pl-8 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none" />
                     </div>
-                    <div class="flex items-center gap-3 pr-1 text-xs text-on-surface-variant">
-                        <span><i class="fas fa-wifi mr-1"></i><span data-i18n="wifi_label">Wi-Fi</span></span>
-                        <span><i class="fas fa-signal mr-1"></i><span data-i18n="mobile_label">Data</span></span>
+                    <button type="button" id="create-profile"
+                        class="flex-shrink-0 rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary transition-transform duration-150 active:scale-95">
+                        <i class="fas fa-magic mr-1 text-xs"></i><span data-i18n="create">Create</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="profiles-list" class="mt-4 space-y-2"></div>
+        </section>
+
+        <!-- ============================ SETTINGS PAGE ============================ -->
+        <section id="page-settings" class="page hidden px-4 pt-6 pb-28" data-page="settings">
+            <h1 class="text-4xl font-normal text-on-surface" data-i18n="settings_page_title">Settings</h1>
+
+            <p class="mt-6 mb-2 px-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
+                data-i18n="settings_general_section">General</p>
+            <div class="rounded-3xl bg-surface-container-low overflow-hidden shadow-sm">
+                <button type="button" id="language_btn"
+                    class="flex w-full items-center justify-between gap-3 p-4 text-left transition-colors duration-150 active:bg-surface-container-high">
+                    <div class="flex items-center gap-3">
+                        <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl bg-primary-container">
+                            <i class="fas fa-globe text-sm text-on-primary-container"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-medium text-on-surface" data-i18n="settings_language_row_title">Language</p>
+                            <p id="current-language-label" class="text-xs text-on-surface-variant">English</p>
+                        </div>
+                    </div>
+                    <i class="fas fa-chevron-right text-xs text-on-surface-variant"></i>
+                </button>
+            </div>
+
+            <p class="mt-6 mb-2 px-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
+                data-i18n="settings_backup_section">Backup &amp; Restore</p>
+            <div class="rounded-3xl bg-surface-container-low p-4 shadow-sm space-y-3">
+                <div class="flex items-center gap-3">
+                    <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl bg-secondary-container">
+                        <i class="fas fa-exchange-alt text-sm text-on-secondary-container"></i>
+                    </div>
+                    <p class="text-sm font-medium text-on-surface" data-i18n="import_export_title">Import / Export Profiles</p>
+                </div>
+
+                <div>
+                    <label for="io-mode-select" data-i18n="mode_label" class="block text-xs text-on-surface-variant">Mode</label>
+                    <select id="io-mode-select"
+                        class="mt-1 w-full rounded-full bg-surface-container-high py-2.5 px-4 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none">
+                        <option data-i18n="export_option" value="export">Export</option>
+                        <option data-i18n="import_option" value="import">Import</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label for="io-path-input" id="io-path-label" data-i18n="destination_path" class="block text-xs text-on-surface-variant">
+                        Destination path
+                    </label>
+                    <input id="io-path-input" type="text" placeholder="/sdcard/Download/profiles.json"
+                        class="mt-1 w-full rounded-full bg-surface-container-high py-2.5 px-4 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none" />
+                    <p id="io-desc" data-i18n="export_desc" class="mt-2 text-xs text-on-surface-variant">
+                        Enter destination path for export
+                    </p>
+                </div>
+
+                <button type="button" id="io-action-btn" data-i18n="run"
+                    class="w-full rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-on-primary transition-transform duration-150 active:scale-95">
+                    Run
+                </button>
+            </div>
+
+            <p class="mt-6 mb-2 px-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
+                data-i18n="settings_danger_section">Danger Zone</p>
+            <div class="rounded-3xl bg-surface-container-low overflow-hidden shadow-sm">
+                <button type="button" id="reset-all-btn"
+                    class="flex w-full items-center gap-3 p-4 text-left transition-colors duration-150 active:bg-surface-container-high">
+                    <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl bg-error-container">
+                        <i class="fas fa-trash text-sm text-on-error-container"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium text-on-surface" data-i18n="settings_reset_title">Reset All Rules</p>
+                        <p class="text-xs text-on-surface-variant" data-i18n="settings_reset_desc">
+                            Clear every blocked app and custom domain rule
+                        </p>
+                    </div>
+                </button>
+            </div>
+
+            <p class="mt-6 mb-2 px-1 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
+                data-i18n="settings_about_section">About</p>
+            <div class="mb-4 rounded-3xl bg-surface-container-low p-4 shadow-sm">
+                <div class="flex items-center gap-3">
+                    <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl bg-tertiary-container">
+                        <i class="fas fa-network-wired text-sm text-on-tertiary-container"></i>
+                    </div>
+                    <div>
+                        <p data-i18n="title" class="text-sm font-medium text-on-surface">Net Switch</p>
+                        <p data-i18n="subtitle" class="text-xs text-on-surface-variant">App Isolation Manager</p>
+                        <p id="about-version" class="mt-0.5 text-xs text-on-surface-variant">&nbsp;</p>
                     </div>
                 </div>
-                <div id="apps-list" class="space-y-2"></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ============================ BOTTOM NAVIGATION ============================ -->
+    <nav id="bottom-nav" class="fixed inset-x-0 bottom-0 z-40 bg-surface-container shadow-[0_-2px_10px_rgba(0,0,0,0.25)]">
+        <div class="mx-auto flex max-w-md items-stretch justify-around px-2 pt-2 pb-2">
+            <button type="button" class="nav-item" data-tab="apps" aria-current="page">
+                <span class="nav-pill">
+                    <i class="fas fa-shield-halved"></i>
+                    <span id="nav-badge-apps" class="nav-badge hidden">0</span>
+                </span>
+                <span class="nav-label" data-i18n="nav_apps">Apps</span>
+            </button>
+            <button type="button" class="nav-item" data-tab="profiles">
+                <span class="nav-pill">
+                    <i class="fas fa-sliders"></i>
+                    <span id="nav-badge-profiles" class="nav-badge hidden">0</span>
+                </span>
+                <span class="nav-label" data-i18n="nav_profiles">Profiles</span>
+            </button>
+            <button type="button" class="nav-item" data-tab="settings">
+                <span class="nav-pill"><i class="fas fa-gear"></i></span>
+                <span class="nav-label" data-i18n="nav_settings">Settings</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ============================ APP ROW TEMPLATE ============================ -->
+    <template id="app-template">
+        <div class="app-row rounded-2xl bg-surface-container-high p-3 transition-shadow duration-150">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex min-w-0 flex-1 items-center space-x-3">
+                    <button type="button" class="app-icon flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl bg-tertiary-container text-sm font-semibold text-on-tertiary-container">
+                        A
+                    </button>
+                    <div class="min-w-0 flex-1">
+                        <p class="truncate text-sm font-medium text-on-surface"></p>
+                        <p class="app-domain-count mt-0.5 truncate text-xs text-on-surface-variant"></p>
+                    </div>
+                </div>
+
+                <div class="flex flex-shrink-0 items-center gap-2.5">
+                    <label class="switch-md3">
+                        <input type="checkbox" class="ns-toggle-wifi" aria-label="Wi-Fi" />
+                        <span class="slider-md3" aria-hidden="true"><i class="fas fa-wifi"></i></span>
+                    </label>
+                    <label class="switch-md3">
+                        <input type="checkbox" class="ns-toggle-mobile" aria-label="Mobile data" />
+                        <span class="slider-md3" aria-hidden="true"><i class="fas fa-signal"></i></span>
+                    </label>
+                    <button type="button" class="ns-domain-btn relative flex h-9 w-9 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest" aria-label="Domain rules">
+                        <i class="fas fa-globe text-xs"></i>
+                        <span class="domain-badge hidden">0</span>
+                    </button>
+                </div>
             </div>
         </div>
+    </template>
 
-        <template id="app-template">
-            <div class="app-row rounded-2xl bg-surface-container-high p-3 transition-shadow duration-150">
-                <div class="flex items-center justify-between gap-2">
-                    <div class="flex min-w-0 flex-1 items-center space-x-3">
-                        <button class="app-icon flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl bg-tertiary-container text-sm font-semibold text-on-tertiary-container">
-                            A
-                        </button>
-                        <div class="min-w-0 flex-1">
-                            <p class="truncate text-sm font-medium text-on-surface"></p>
-                            <p class="app-domain-count mt-0.5 truncate text-xs text-on-surface-variant"></p>
-                        </div>
-                    </div>
-
-                    <div class="flex flex-shrink-0 items-center gap-3">
-                        <label class="switch-md3">
-                            <input type="checkbox" class="ns-toggle-wifi" aria-label="Wi-Fi" />
-                            <span class="slider-md3" aria-hidden="true"><i class="fas fa-wifi"></i></span>
-                        </label>
-                        <label class="switch-md3">
-                            <input type="checkbox" class="ns-toggle-mobile" aria-label="Mobile data" />
-                            <span class="slider-md3" aria-hidden="true"><i class="fas fa-signal"></i></span>
-                        </label>
-                        <button class="ns-domain-btn flex h-9 w-9 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
-                            <i class="fas fa-ban text-xs"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </template>
-
-        <div id="loading-spinner" class="fixed inset-0 z-50 hidden items-center justify-center bg-scrim/40">
-            <div class="rounded-3xl bg-surface-container-high p-6 shadow-2xl">
-                <div class="flex items-center space-x-3">
-                    <div class="h-6 w-6 animate-spin rounded-full border-2 border-outline-variant border-t-primary"></div>
-                    <div class="text-sm font-medium text-on-surface" data-i18n="loading">Loading...</div>
-                </div>
+    <div id="loading-spinner" class="fixed inset-0 z-50 hidden items-center justify-center bg-scrim/40">
+        <div class="rounded-3xl bg-surface-container-high p-6 shadow-2xl">
+            <div class="flex items-center space-x-3">
+                <div class="h-6 w-6 animate-spin rounded-full border-2 border-outline-variant border-t-primary"></div>
+                <div class="text-sm font-medium text-on-surface" data-i18n="loading">Loading...</div>
             </div>
         </div>
     </div>
 
-    <div id="io-page" class="hidden mx-3 mt-4 rounded-3xl bg-surface-container-low p-4 shadow-sm">
-        <div class="mb-4 flex items-center space-x-2">
-            <div class="flex h-7 w-7 items-center justify-center rounded-xl bg-secondary-container">
-                <i class="fas fa-exchange-alt text-xs text-on-secondary-container"></i>
-            </div>
-            <h2 data-i18n="import_export_title" class="text-base font-semibold text-on-surface">Import / Export</h2>
-        </div>
-
-        <div class="space-y-3">
-            <div>
-                <label for="io-mode-select" data-i18n="mode_label" class="block text-sm text-on-surface-variant">Mode</label>
-                <select id="io-mode-select"
-                    class="mt-1 w-full rounded-full bg-surface-container-high py-2 px-4 text-sm text-on-surface">
-                    <option data-i18n="export_option" value="export">Export</option>
-                    <option data-i18n="import_option" value="import">Import</option>
-                </select>
-            </div>
-
-            <div>
-                <label for="io-path-input" id="io-path-label" data-i18n="destination_path" class="block text-sm text-on-surface-variant">Destination path</label>
-                <input id="io-path-input" type="text" placeholder="/sdcard/Download/profiles.json"
-                    class="mt-1 w-full rounded-full bg-surface-container-high py-2 px-4 text-sm text-on-surface" />
-                <p id="io-desc" data-i18n="export_desc" class="mt-2 text-xs text-on-surface-variant">
-                    Enter destination path for export
-                </p>
-            </div>
-
-            <div class="flex items-center gap-3">
-                <button id="io-action-btn" data-i18n="run"
-                    class="rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary">Run</button>
-                <button id="io-back-btn" data-i18n="back_button"
-                    class="rounded-full bg-surface-container-high px-4 py-2 text-sm text-on-surface">Back</button>
-            </div>
-        </div>
-    </div>
-
+    <!-- ============================ DIALOGS ============================ -->
     <dialog id="domain_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
         <div class="p-6">
             <div class="mb-1 flex items-center justify-between">
                 <h3 data-i18n="domains_title" class="text-lg font-semibold text-on-surface">Blocked Domains</h3>
-                <button onclick="domain_modal.close()"
+                <button type="button" onclick="domain_modal.close()"
                     class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
                     <i class="fas fa-times text-sm"></i>
                 </button>
@@ -204,7 +266,7 @@
                 <input type="text" id="domain-input" data-i18n-placeholder="domain_input_placeholder"
                     placeholder="example.com or 1.2.3.4"
                     class="w-full rounded-full bg-surface py-2 px-4 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none" />
-                <button id="domain-add-btn"
+                <button type="button" id="domain-add-btn"
                     class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-primary text-on-primary">
                     <i class="fas fa-plus text-xs"></i>
                 </button>
@@ -221,7 +283,7 @@
         <div class="p-6">
             <div class="mb-4 flex items-center justify-between">
                 <h3 data-i18n="select_language" class="text-lg font-semibold text-on-surface">Select Language</h3>
-                <button id="language-modal-close" onclick="language_modal.close()"
+                <button type="button" id="language-modal-close" onclick="language_modal.close()"
                     class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
                     <i class="fas fa-times text-sm"></i>
                 </button>
@@ -233,6 +295,38 @@
             </div>
 
             <div id="language_selection" class="mt-4 flex flex-col gap-2"></div>
+        </div>
+    </dialog>
+
+    <dialog id="sort_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
+        <div class="p-6">
+            <div class="mb-4 flex items-center justify-between">
+                <h3 data-i18n="sort_label" class="text-lg font-semibold text-on-surface">Sort</h3>
+                <button type="button" onclick="sort_modal.close()"
+                    class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+            <div id="sort-options" class="flex flex-col gap-2">
+                <button type="button" class="btn sort-option" data-sort="blocked" aria-pressed="true" data-i18n="sort_blocked_first">Blocked first</button>
+                <button type="button" class="btn sort-option" data-sort="name-asc" aria-pressed="false" data-i18n="sort_name_asc">Name (A&ndash;Z)</button>
+                <button type="button" class="btn sort-option" data-sort="name-desc" aria-pressed="false" data-i18n="sort_name_desc">Name (Z&ndash;A)</button>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="confirm_reset_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
+        <div class="p-6">
+            <h3 data-i18n="settings_reset_confirm_title" class="text-lg font-semibold text-on-surface">Reset all rules?</h3>
+            <p class="mt-2 text-sm text-on-surface-variant" data-i18n="settings_reset_confirm_desc">
+                This clears every blocked app and custom domain rule. This can't be undone.
+            </p>
+            <div class="mt-5 flex gap-3">
+                <button type="button" id="cancel-reset-btn" data-i18n="cancel"
+                    class="flex-1 rounded-full bg-surface-container-high px-4 py-2.5 text-sm text-on-surface">Cancel</button>
+                <button type="button" id="confirm-reset-btn" data-i18n="settings_reset_confirm_btn"
+                    class="flex-1 rounded-full bg-error-container px-4 py-2.5 text-sm font-medium text-on-error-container">Reset</button>
+            </div>
         </div>
     </dialog>
 </body>

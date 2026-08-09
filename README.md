@@ -29,10 +29,10 @@ Magisk doesn't support module WebUI on their manager, but you can use one of the
 - Flash Net Switch Module
 - Reboot
 - Open Net Switch WebUI
-- Toggle **Wi-Fi** and **Data** independently for each app. Changes are applied immediately, no need to reboot.
-- Tap the ban icon on an app to block custom domains or IP addresses for that app only.
-- Create and apply **profiles** to quickly switch blocked-app sets.
-- Backup and restore your profiles.
+- The WebUI has three tabs, in the bottom navigation bar:
+  - **Apps** — toggle **Wi-Fi** and **Data** independently for each app (applied immediately, no reboot needed). Filter by User/System apps, sort, search, and use **Block All** / **Unblock All** to act on the currently filtered list. Tap the globe icon on an app to block custom domains or IP addresses for that app only.
+  - **Profiles** — create, apply, and delete saved sets of blocked apps.
+  - **Settings** — change the interface language, import/export your profiles, reset all rules, and view the installed version.
 
 ## Terminal Usage
 Open Termux or any terminal with root access and run:
