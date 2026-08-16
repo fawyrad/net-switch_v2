@@ -116,7 +116,11 @@ async function persistDefaultKey(key, value) {
 async function loadPersistedProfile() {
   const cfg = await readDefaultConfig();
   if (cfg.currentProfile && profiles[cfg.currentProfile]) {
-    await loadProfile(cfg.currentProfile);
+    // Restore marker only. Do NOT re-apply: live wifi.json/mobile.json already
+    // persist across reboot via service.sh, and re-applying an empty profile
+    // would wipe the live set (the original bug).
+    currentProfile = cfg.currentProfile;
+    renderProfilesList();
   }
 }
 
@@ -152,10 +156,27 @@ function updateAppsNavBadge() {
 function updateAppsSubtitle(visibleCount) {
   const el = document.getElementById("apps-page-count");
   if (!el) return;
+  // Reflect the TOTAL number of blocked apps from the live config (wifi.json/
+  // mobile.json/domains), not just the rows currently visible under the active
+  // filter. Otherwise a blocked app hidden by the filter (e.g. a system app
+  // while "User" is selected) would make this read "0 blocked" and appear to
+  // not sync with the JSON.
+  const blockedTotal = Object.values(appConfig).filter(
+    (s) => s.wifi || s.mobile || (s.domains && s.domains.length),
+  ).length;
   const blockedVisible = [...appsList.children].filter(
     (n) => n.style.display !== "none" && n.dataset.blocked === "1",
   ).length;
-  el.textContent = t("apps_page_subtitle", visibleCount, blockedVisible);
+  const key = visibleCount === 1 ? "apps_page_subtitle_one" : "apps_page_subtitle";
+  let text = t(key, visibleCount, blockedTotal);
+  const hidden = blockedTotal - blockedVisible;
+  if (hidden > 0) text += t("apps_filtered_hint", hidden);
+  el.textContent = text;
+}
+
+/** Pick the singular ("_one") or plural translation key based on n (English grammar). */
+function pluralCount(n, baseKey) {
+  return t(n === 1 ? `${baseKey}_one` : baseKey, n);
 }
 
 function applyFilters() {
@@ -206,7 +227,7 @@ function updateAppRow(el, pkg) {
   if (wifiToggle) wifiToggle.checked = !!state.wifi;
   if (mobileToggle) mobileToggle.checked = !!state.mobile;
   if (domainCount) {
-    domainCount.textContent = state.domains.length ? t("domains_count", state.domains.length) : "";
+    domainCount.textContent = state.domains.length ? pluralCount(state.domains.length, "domains_count") : "";
   }
   if (domainBtn) domainBtn.classList.toggle("has-domains", state.domains.length > 0);
   if (domainBadge) {
@@ -267,6 +288,7 @@ function populateApp(pkg) {
         appConfig[pkg][key] = toggle.checked;
         updateAppRow(el, pkg);
         refreshAppsView();
+        await syncActiveProfile();
         toast(t("operation_completed"), "success");
       } catch (error) {
         toggle.checked = previous;
@@ -329,7 +351,8 @@ async function blockAllVisible() {
     appConfig = await fetchConfig();
     refreshAllRows();
     refreshAppsView();
-    toast(t("bulk_blocked", pkgs.length), "success");
+    await syncActiveProfile();
+    toast(pluralCount(pkgs.length, "bulk_blocked"), "success");
   } catch (error) {
     reportError(error);
   } finally {
@@ -347,7 +370,8 @@ async function unblockAllVisible() {
     appConfig = await fetchConfig();
     refreshAllRows();
     refreshAppsView();
-    toast(t("bulk_unblocked", pkgs.length), "success");
+    await syncActiveProfile();
+    toast(pluralCount(pkgs.length, "bulk_unblocked"), "success");
   } catch (error) {
     reportError(error);
   } finally {
@@ -355,12 +379,19 @@ async function unblockAllVisible() {
   }
 }
 
-/** Fully clears the Wi-Fi/mobile block lists for every installed app (keeps custom domains). */
+/** Fully clears the Wi-Fi/mobile block lists AND custom domain rules for every installed app. */
 async function unblockEverything() {
   showSpinner();
   try {
     await run("netswitch set-wifi");
     await run("netswitch set-mobile");
+    // Also clear every app's custom domain set so "No Profile" is a truly clean state.
+    const domainPkgs = Object.entries(appConfig)
+      .filter(([, s]) => s.domains && s.domains.length)
+      .map(([p]) => p);
+    for (const pkg of domainPkgs) {
+      await run(`netswitch domain-set ${shQuote(pkg)}`);
+    }
     appConfig = await fetchConfig();
     refreshAllRows();
     refreshAppsView();
@@ -516,6 +547,7 @@ async function addDomain(pkg, entry) {
     await refreshDomainsFor(pkg);
     renderDomainChips(pkg);
     refreshAppRowFor(pkg);
+    await syncActiveProfile();
     toast(t("domain_added", entry), "success");
   } catch (error) {
     reportError(error);
@@ -531,7 +563,220 @@ async function removeDomain(pkg, entry) {
     await refreshDomainsFor(pkg);
     renderDomainChips(pkg);
     refreshAppRowFor(pkg);
+    await syncActiveProfile();
     toast(t("domain_removed", entry), "success");
+  } catch (error) {
+    reportError(error);
+  } finally {
+    hideSpinner();
+  }
+}
+
+// Feature 8 — built-in shared blocklists users can pull in without typing.
+const DOMAIN_PRESETS = {
+  ads: [
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "adservice.google.com",
+    "adnxs.com",
+    "pagead2.googlesyndication.com",
+    "ads.yahoo.com",
+  ],
+  social: ["facebook.com", "instagram.com", "tiktok.com", "twitter.com", "x.com", "snapchat.com"],
+};
+
+/* Feature 11 — user-defined reusable domain blocklists, persisted alongside profiles. */
+const presetsPath = `${configDir}/domain_presets.json`;
+let domainPresets = {};
+
+async function loadDomainPresets() {
+  try {
+    const out = await run(`cat ${presetsPath} 2>/dev/null || echo '{}'`);
+    domainPresets = out ? JSON.parse(out) : {};
+  } catch (e) {
+    domainPresets = {};
+  }
+}
+
+async function saveDomainPresets() {
+  await run(`echo ${shQuote(JSON.stringify(domainPresets))} > ${presetsPath}`);
+}
+
+function resolvePresetDomains(value) {
+  if (!value) return null;
+  if (value.startsWith("user:")) return domainPresets[value.slice(5)] || [];
+  return DOMAIN_PRESETS[value] || null;
+}
+
+function populatePresetSelect() {
+  const sel = document.getElementById("domain-preset-select");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = t("domain_preset_none");
+  sel.appendChild(none);
+
+  const builtin = document.createElement("optgroup");
+  builtin.label = t("preset_group_builtin");
+  Object.keys(DOMAIN_PRESETS).forEach((k) => {
+    const o = document.createElement("option");
+    o.value = k;
+    o.textContent = t(k === "ads" ? "domain_preset_ads" : "domain_preset_social");
+    builtin.appendChild(o);
+  });
+  sel.appendChild(builtin);
+
+  const names = Object.keys(domainPresets);
+  if (names.length) {
+    const custom = document.createElement("optgroup");
+    custom.label = t("preset_group_custom");
+    names.forEach((name) => {
+      const o = document.createElement("option");
+      o.value = `user:${name}`;
+      o.textContent = name;
+      custom.appendChild(o);
+    });
+    sel.appendChild(custom);
+  }
+}
+
+let presetSaveDomains = [];
+function openPresetSaveModal() {
+  const text = document.getElementById("domain-import-text")?.value || "";
+  let domains = [
+    ...new Set(text.split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter(Boolean)),
+  ];
+  if (!domains.length) domains = (appConfig[currentDomainPkg]?.domains || []).slice();
+  if (!domains.length) {
+    toast(t("preset_needs_domains"), "error");
+    return;
+  }
+  presetSaveDomains = domains;
+  const input = document.getElementById("preset-name-input");
+  if (input) input.value = "";
+  const modal = document.getElementById("preset_save_modal");
+  if (modal) {
+    document.documentElement.classList.add("modal-open");
+    modal.showModal();
+    input?.focus();
+  }
+}
+
+async function saveDomainPreset(name) {
+  name = (name || "").trim();
+  if (!name) {
+    toast(t("preset_needs_name"), "error");
+    return false;
+  }
+  domainPresets[name] = [...presetSaveDomains];
+  await saveDomainPresets();
+  populatePresetSelect();
+  toast(t("preset_saved", name), "success");
+  return true;
+}
+
+async function deleteDomainPreset(name) {
+  delete domainPresets[name];
+  await saveDomainPresets();
+  populatePresetSelect();
+  renderPresetManager();
+  toast(t("preset_deleted", name), "success");
+}
+
+function renderPresetManager() {
+  const list = document.getElementById("preset-manager-list");
+  const empty = document.getElementById("preset-manager-empty");
+  if (!list) return;
+  list.innerHTML = "";
+  const names = Object.keys(domainPresets);
+  if (empty) empty.classList.toggle("hidden", names.length > 0);
+  names.forEach((name) => {
+    const row = document.createElement("div");
+    row.className = "flex items-center gap-2 rounded-2xl bg-surface-container-high p-3";
+    row.dataset.preset = name;
+    const info = document.createElement("div");
+    info.className = "min-w-0 flex-1";
+    const title = document.createElement("p");
+    title.className = "truncate text-sm font-medium text-on-surface";
+    title.textContent = name;
+    const sub = document.createElement("p");
+    sub.className = "truncate text-xs text-on-surface-variant";
+    sub.textContent = pluralCount(domainPresets[name].length, "preset_domains_count");
+    info.append(title, sub);
+    row.appendChild(info);
+    row.appendChild(
+      makeActionButton({
+        testid: `preset-delete-${name}`,
+        ariaKey: "profile_delete",
+        iconClass: "fas fa-trash text-xs",
+        extraClass: "text-error hover:bg-error-container/30",
+        onClick: () => deleteDomainPreset(name),
+      }),
+    );
+    list.appendChild(row);
+  });
+}
+
+function openPresetManager() {
+  renderPresetManager();
+  const modal = document.getElementById("preset_manager_modal");
+  if (modal) {
+    document.documentElement.classList.add("modal-open");
+    modal.showModal();
+  }
+}
+
+function setupPresetModals() {
+  const saveModal = document.getElementById("preset_save_modal");
+  const nameInput = document.getElementById("preset-name-input");
+  const saveConfirm = document.getElementById("preset-save-confirm-btn");
+  if (saveModal && nameInput && saveConfirm) {
+    const submit = async () => {
+      if (await saveDomainPreset(nameInput.value)) {
+        saveModal.close();
+        document.documentElement.classList.remove("modal-open");
+      }
+    };
+    saveConfirm.addEventListener("click", submit);
+    nameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+    saveModal.addEventListener("close", () =>
+      document.documentElement.classList.remove("modal-open"),
+    );
+  }
+  document
+    .getElementById("preset_manager_modal")
+    ?.addEventListener("close", () => document.documentElement.classList.remove("modal-open"));
+  document.getElementById("domain-preset-save-btn")?.addEventListener("click", openPresetSaveModal);
+  document
+    .getElementById("domain-preset-manage-btn")
+    ?.addEventListener("click", openPresetManager);
+}
+
+async function importDomains(pkg, rawText) {
+  const entries = [
+    ...new Set(
+      String(rawText || "")
+        .split(/[\s,;]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+  if (!entries.length) {
+    toast(t("no_valid_domains"), "error");
+    return;
+  }
+  showSpinner();
+  try {
+    await run(`netswitch domain-add ${shQuote(pkg)} ${entries.map(shQuote).join(" ")}`);
+    await refreshDomainsFor(pkg);
+    renderDomainChips(pkg);
+    refreshAppRowFor(pkg);
+    await syncActiveProfile();
+    toast(pluralCount(entries.length, "domains_imported"), "success");
   } catch (error) {
     reportError(error);
   } finally {
@@ -545,6 +790,11 @@ function openDomainModal(pkg) {
   if (appLabel) appLabel.textContent = pkg;
   const input = document.getElementById("domain-input");
   if (input) input.value = "";
+  const importText = document.getElementById("domain-import-text");
+  if (importText) importText.value = "";
+  const presetSel = document.getElementById("domain-preset-select");
+  if (presetSel) presetSel.value = "";
+  populatePresetSelect();
   renderDomainChips(pkg);
   document.getElementById("domain_modal")?.showModal();
 }
@@ -565,18 +815,60 @@ function setupDomainModal() {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") submit();
   });
+
+  const importBtn = document.getElementById("domain-import-btn");
+  const importText = document.getElementById("domain-import-text");
+  const presetSel = document.getElementById("domain-preset-select");
+  presetSel?.addEventListener("change", () => {
+    const preset = resolvePresetDomains(presetSel.value);
+    if (preset && importText) importText.value = preset.join("\n");
+  });
+  importBtn?.addEventListener("click", async () => {
+    if (!importText) return;
+    await importDomains(currentDomainPkg, importText.value);
+    importText.value = "";
+    if (presetSel) presetSel.value = "";
+  });
 }
 
 /* ============================================================================
  * Profiles page
  * ==========================================================================*/
 
+function makeActionButton({ testid, ariaKey, iconClass, extraClass, onClick }) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className =
+    "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full hover:bg-surface-container-highest " +
+    (extraClass || "text-on-surface-variant");
+  btn.setAttribute("aria-label", t(ariaKey));
+  btn.setAttribute("data-testid", testid);
+  const icon = document.createElement("i");
+  icon.className = iconClass;
+  btn.appendChild(icon);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return btn;
+}
+
+// Unified row markup for both the "No Profile" entry and named profiles: every
+// row is a <div.profile-row> with a single tappable apply <button.profile-apply>
+// plus (for named profiles) rename / duplicate / delete action buttons.
 function createProfileRow({ isNone, name, count, isActive }) {
-  const row = document.createElement(isNone ? "button" : "div");
-  row.className =
-    "profile-row flex w-full items-center gap-3 rounded-2xl bg-surface-container-high p-3" +
-    (isNone ? " text-left" : "");
-  if (isNone) row.type = "button";
+  const row = document.createElement("div");
+  row.className = "profile-row flex w-full items-center gap-2 rounded-2xl bg-surface-container-high p-3";
+  if (!isNone) row.dataset.profile = name;
+
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "profile-apply flex min-w-0 flex-1 items-center gap-3 text-left";
+  applyBtn.setAttribute(
+    "aria-label",
+    isNone ? t("profile_none_label") : t("profile_apply_aria", name),
+  );
+  applyBtn.setAttribute("data-testid", isNone ? "profile-apply-none" : `profile-apply-${name}`);
 
   const iconWrap = document.createElement("div");
   iconWrap.className = `flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl ${
@@ -594,47 +886,88 @@ function createProfileRow({ isNone, name, count, isActive }) {
   title.className = "truncate text-sm font-medium text-on-surface";
   title.textContent = isNone ? t("profile_none_label") : name;
   const subtitle = document.createElement("p");
-  subtitle.className = "truncate text-xs text-on-surface-variant";
-  subtitle.textContent = isNone ? t("profile_none_desc") : t("profile_apps_count", count);
+  subtitle.className = "profile-count truncate text-xs text-on-surface-variant";
+  subtitle.textContent = isNone ? t("profile_none_desc") : pluralCount(count, "profile_apps_count");
   textWrap.append(title, subtitle);
 
-  if (isNone) {
-    row.append(iconWrap, textWrap);
-    if (isActive) {
-      const check = document.createElement("i");
-      check.className = "fas fa-circle-check text-sm text-primary";
-      row.appendChild(check);
-    }
-    row.addEventListener("click", () => unblockEverything());
-    return row;
-  }
-
-  const applyBtn = document.createElement("button");
-  applyBtn.type = "button";
-  applyBtn.className = "flex min-w-0 flex-1 items-center gap-3 text-left";
   applyBtn.append(iconWrap, textWrap);
-  applyBtn.addEventListener("click", () => loadProfile(name));
+  applyBtn.addEventListener("click", () => (isNone ? unblockEverything() : loadProfile(name)));
+
+  if (!isNone) {
+    const grip = document.createElement("span");
+    grip.className =
+      "profile-drag-handle flex h-9 w-5 flex-shrink-0 cursor-grab items-center justify-center text-on-surface-variant";
+    grip.setAttribute("data-testid", `profile-drag-${name}`);
+    grip.setAttribute("aria-label", t("profile_reorder"));
+    grip.innerHTML = '<i class="fas fa-grip-vertical text-xs"></i>';
+    grip.style.touchAction = "none";
+    row.appendChild(grip);
+    attachLongPressDrag(grip, row, name);
+
+    row.draggable = true;
+    row.addEventListener("dragstart", (e) => {
+      dragSourceProfile = name;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", name);
+      row.classList.add("opacity-50");
+    });
+    row.addEventListener("dragend", () => {
+      dragSourceProfile = "";
+      row.classList.remove("opacity-50");
+    });
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    });
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const src = dragSourceProfile || e.dataTransfer.getData("text/plain");
+      reorderProfiles(src, name);
+    });
+  }
   row.appendChild(applyBtn);
 
   if (isActive) {
     const check = document.createElement("i");
-    check.className = "fas fa-circle-check mr-1 text-sm text-primary";
+    check.className = "fas fa-circle-check flex-shrink-0 text-sm text-primary";
     row.appendChild(check);
   }
 
-  const deleteBtn = document.createElement("button");
-  deleteBtn.type = "button";
-  deleteBtn.className =
-    "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-error hover:bg-error-container/30";
-  deleteBtn.setAttribute("aria-label", "Delete profile");
-  const trashIcon = document.createElement("i");
-  trashIcon.className = "fas fa-trash text-xs";
-  deleteBtn.appendChild(trashIcon);
-  deleteBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    deleteProfile(name);
-  });
-  row.appendChild(deleteBtn);
+  if (!isNone) {
+    row.appendChild(
+      makeActionButton({
+        testid: `profile-rename-${name}`,
+        ariaKey: "profile_rename",
+        iconClass: "fas fa-pen text-xs",
+        onClick: () => openRenameModal(name),
+      }),
+    );
+    row.appendChild(
+      makeActionButton({
+        testid: `profile-clone-${name}`,
+        ariaKey: "profile_clone",
+        iconClass: "fas fa-copy text-xs",
+        onClick: () => cloneProfile(name),
+      }),
+    );
+    row.appendChild(
+      makeActionButton({
+        testid: `profile-share-${name}`,
+        ariaKey: "profile_share",
+        iconClass: "fas fa-share-nodes text-xs",
+        onClick: () => openShareModal(name),
+      }),
+    );
+    row.appendChild(
+      makeActionButton({
+        testid: `profile-delete-${name}`,
+        ariaKey: "profile_delete",
+        iconClass: "fas fa-trash text-xs",
+        extraClass: "text-error hover:bg-error-container/30",
+        onClick: () => deleteProfile(name),
+      }),
+    );
+  }
 
   return row;
 }
@@ -648,7 +981,7 @@ function renderProfilesList() {
 
   Object.keys(profiles).forEach((name) => {
     const profile = profiles[name];
-    const count = (profile?.wifi?.length || 0) + (profile?.mobile?.length || 0);
+    const count = countIsolatedApps(profile);
     container.appendChild(
       createProfileRow({ isNone: false, name, count, isActive: name === currentProfile }),
     );
@@ -691,6 +1024,22 @@ async function loadProfile(profileName) {
     await run(`netswitch set-wifi ${wifiPkgs.map(shQuote).join(" ")}`.trim());
     await run(`netswitch set-mobile ${mobilePkgs.map(shQuote).join(" ")}`.trim());
 
+    // Restore each app's custom domain set from the profile snapshot. Apps that
+    // currently have domains but are not in the profile get their set cleared,
+    // so applying a profile fully restores its state (domain-set replaces the
+    // whole per-app list; empty args clears it).
+    const targetDomains = profile.domains || {};
+    const pkgsToReconcile = new Set([
+      ...Object.keys(targetDomains),
+      ...Object.entries(appConfig)
+        .filter(([, s]) => s.domains && s.domains.length)
+        .map(([p]) => p),
+    ]);
+    for (const pkg of pkgsToReconcile) {
+      const entries = (targetDomains[pkg] || []).filter(Boolean);
+      await run(`netswitch domain-set ${shQuote(pkg)} ${entries.map(shQuote).join(" ")}`.trim());
+    }
+
     appConfig = await fetchConfig();
     refreshAllRows();
     refreshAppsView();
@@ -699,7 +1048,8 @@ async function loadProfile(profileName) {
     await persistDefaultKey("currentProfile", currentProfile);
     renderProfilesList();
 
-    toast(t("profile_activated", profileName, wifiPkgs.length + mobilePkgs.length), "success");
+    const n = new Set([...wifiPkgs, ...mobilePkgs]).size;
+    toast(t(n === 1 ? "profile_activated_one" : "profile_activated", profileName, n), "success");
   } catch (error) {
     reportError(error);
   } finally {
@@ -710,11 +1060,31 @@ async function loadProfile(profileName) {
 function collectCurrentSelection() {
   const wifi = [];
   const mobile = [];
+  const domains = {};
   Object.entries(appConfig).forEach(([pkg, state]) => {
     if (state.wifi) wifi.push(pkg);
     if (state.mobile) mobile.push(pkg);
+    if (state.domains && state.domains.length) domains[pkg] = [...state.domains];
   });
-  return { wifi, mobile };
+  return { wifi, mobile, domains };
+}
+
+/** Number of UNIQUE apps isolated by a profile (an app blocked on both Wi-Fi
+ *  and mobile must count once, not twice). */
+function countIsolatedApps(profile) {
+  return new Set([...(profile?.wifi || []), ...(profile?.mobile || [])]).size;
+}
+
+/**
+ * Keep the active profile in sync with the live selection so profiles behave
+ * as a live, auto-updating set instead of a one-time snapshot.
+ * No-op for the "No Profile" case (currentProfile === "").
+ */
+async function syncActiveProfile() {
+  if (!currentProfile || !profiles[currentProfile]) return;
+  profiles[currentProfile] = collectCurrentSelection();
+  await saveProfiles();
+  renderProfilesList();
 }
 
 async function saveCurrentProfile(profileName) {
@@ -726,8 +1096,8 @@ async function saveCurrentProfile(profileName) {
     await persistDefaultKey("currentProfile", currentProfile);
     renderProfilesList();
 
-    const total = profiles[profileName].wifi.length + profiles[profileName].mobile.length;
-    toast(t("profile_created", profileName, total), "success");
+    const total = countIsolatedApps(profiles[profileName]);
+    toast(t(total === 1 ? "profile_created_one" : "profile_created", profileName, total), "success");
   } catch (error) {
     reportError(error);
   } finally {
@@ -758,6 +1128,322 @@ async function deleteProfile(profileName) {
   } finally {
     hideSpinner();
   }
+}
+
+async function renameProfile(oldName, newName) {
+  newName = (newName || "").trim();
+  if (!newName) {
+    toast(t("enter_profile_name"), "error");
+    return false;
+  }
+  if (newName === oldName) return true;
+  if (profiles[newName]) {
+    toast(t("profile_exists"), "error");
+    return false;
+  }
+  showSpinner();
+  try {
+    // Preserve insertion order by rebuilding the map with the key renamed.
+    const rebuilt = {};
+    Object.keys(profiles).forEach((k) => {
+      rebuilt[k === oldName ? newName : k] = profiles[k];
+    });
+    profiles = rebuilt;
+    await saveProfiles();
+    if (currentProfile === oldName) {
+      currentProfile = newName;
+      await persistDefaultKey("currentProfile", currentProfile);
+    }
+    renderProfilesList();
+    toast(t("profile_renamed", newName), "success");
+    return true;
+  } catch (error) {
+    reportError(error);
+    return false;
+  } finally {
+    hideSpinner();
+  }
+}
+
+async function cloneProfile(name) {
+  const src = profiles[name];
+  if (!src) {
+    toast(t("profile_not_found", name), "error");
+    return;
+  }
+  let newName = `${name} copy`;
+  let i = 2;
+  while (profiles[newName]) newName = `${name} copy ${i++}`;
+  showSpinner();
+  try {
+    profiles[newName] = JSON.parse(JSON.stringify(src));
+    await saveProfiles();
+    renderProfilesList();
+    toast(t("profile_cloned", newName), "success");
+  } catch (error) {
+    reportError(error);
+  } finally {
+    hideSpinner();
+  }
+}
+
+let dragSourceProfile = "";
+
+// Feature 7 — reorder profiles by drag & drop. profiles is an insertion-ordered
+// object, so reordering means rebuilding it with the keys in the new order.
+async function reorderProfiles(source, targetName) {
+  if (!source || source === targetName || !profiles[source]) return;
+  const keys = Object.keys(profiles).filter((k) => k !== source);
+  const rebuilt = {};
+  const idx = targetName && profiles[targetName] ? keys.indexOf(targetName) : keys.length;
+  keys.splice(idx < 0 ? keys.length : idx, 0, source);
+  keys.forEach((k) => (rebuilt[k] = profiles[k]));
+  profiles = rebuilt;
+  await saveProfiles();
+  renderProfilesList();
+  toast(t("profiles_reordered"), "success");
+}
+
+// Feature 12 — long-press drag for touch (and mouse) using Pointer Events, so
+// reordering works naturally on phones where HTML5 drag-and-drop does not fire.
+function attachLongPressDrag(grip, row, name) {
+  let pressTimer = null;
+  let dragging = false;
+  let dropTarget = "";
+  const LONG_PRESS_MS = 300;
+
+  const clearHighlights = () =>
+    document
+      .querySelectorAll(".profile-row.drop-target")
+      .forEach((r) => r.classList.remove("drop-target", "ring-2", "ring-primary"));
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const target = el && el.closest ? el.closest(".profile-row[data-profile]") : null;
+    clearHighlights();
+    if (target && target !== row) {
+      target.classList.add("drop-target", "ring-2", "ring-primary");
+      dropTarget = target.dataset.profile;
+    } else {
+      dropTarget = "";
+    }
+  };
+
+  const end = async () => {
+    clearTimeout(pressTimer);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", end);
+    window.removeEventListener("pointercancel", end);
+    if (dragging) {
+      dragging = false;
+      row.classList.remove("opacity-60", "scale-[1.02]");
+      clearHighlights();
+      if (dropTarget) await reorderProfiles(name, dropTarget);
+    }
+  };
+
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    dropTarget = "";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    pressTimer = setTimeout(() => {
+      dragging = true;
+      row.classList.add("opacity-60", "scale-[1.02]");
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, LONG_PRESS_MS);
+  });
+}
+
+// Feature 9 — share/export a profile as a portable code, and import one.
+function encodeProfile(name) {
+  const src = profiles[name] || {};
+  const payload = {
+    v: 1,
+    name,
+    wifi: src.wifi || [],
+    mobile: src.mobile || [],
+    domains: src.domains || {},
+  };
+  return "NSPROF1:" + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+}
+
+function decodeProfile(code) {
+  const str = String(code || "").trim();
+  if (!str.startsWith("NSPROF1:")) throw new Error("bad prefix");
+  const json = decodeURIComponent(escape(atob(str.slice(8))));
+  const o = JSON.parse(json);
+  if (!o || typeof o.name !== "string") throw new Error("bad payload");
+  return o;
+}
+
+async function importProfileFromString(code) {
+  let o;
+  try {
+    o = decodeProfile(code);
+  } catch (e) {
+    toast(t("invalid_profile_code"), "error");
+    return false;
+  }
+  let name = o.name || "Imported";
+  let i = 2;
+  while (profiles[name]) name = `${o.name} (${i++})`;
+  showSpinner();
+  try {
+    profiles[name] = {
+      wifi: Array.isArray(o.wifi) ? o.wifi : [],
+      mobile: Array.isArray(o.mobile) ? o.mobile : [],
+      domains: o.domains && typeof o.domains === "object" ? o.domains : {},
+    };
+    await saveProfiles();
+    renderProfilesList();
+    toast(t("profile_imported", name), "success");
+    return true;
+  } catch (error) {
+    reportError(error);
+    return false;
+  } finally {
+    hideSpinner();
+  }
+}
+
+function openShareModal(name) {
+  const ta = document.getElementById("share-text");
+  const modal = document.getElementById("profile_share_modal");
+  if (ta) ta.value = encodeProfile(name);
+  if (modal) {
+    document.documentElement.classList.add("modal-open");
+    modal.showModal();
+    ta?.select();
+  }
+}
+
+function setupShareModal() {
+  const modal = document.getElementById("profile_share_modal");
+  const ta = document.getElementById("share-text");
+  const copyBtn = document.getElementById("share-copy-btn");
+  if (!modal || !ta || !copyBtn) return;
+  copyBtn.addEventListener("click", async () => {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(ta.value);
+      else {
+        ta.select();
+        document.execCommand("copy");
+      }
+      toast(t("copied"), "success");
+    } catch (e) {
+      ta.select();
+    }
+  });
+  modal.addEventListener("close", () => document.documentElement.classList.remove("modal-open"));
+}
+
+function openImportProfileModal() {
+  const ta = document.getElementById("import-text");
+  const modal = document.getElementById("profile_import_modal");
+  if (ta) ta.value = "";
+  renderImportPreview("");
+  if (modal) {
+    document.documentElement.classList.add("modal-open");
+    modal.showModal();
+    ta?.focus();
+  }
+}
+
+// Feature 13 — decode the pasted code and show a preview of what it contains
+// before the user confirms the import.
+function renderImportPreview(code) {
+  const box = document.getElementById("import-preview");
+  const confirmBtn = document.getElementById("import-confirm-btn");
+  if (!box) return;
+  const text = String(code || "").trim();
+  if (!text) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    if (confirmBtn) confirmBtn.disabled = false;
+    return;
+  }
+  let o;
+  try {
+    o = decodeProfile(text);
+  } catch (e) {
+    box.classList.remove("hidden");
+    box.innerHTML = `<p class="text-xs text-error">${t("invalid_profile_code")}</p>`;
+    if (confirmBtn) confirmBtn.disabled = true;
+    return;
+  }
+  const wifi = Array.isArray(o.wifi) ? o.wifi : [];
+  const mobile = Array.isArray(o.mobile) ? o.mobile : [];
+  const domainsMap = o.domains && typeof o.domains === "object" ? o.domains : {};
+  const domainRules = Object.values(domainsMap).reduce(
+    (n, arr) => n + (Array.isArray(arr) ? arr.length : 0),
+    0,
+  );
+  const esc = (s) =>
+    String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <p class="text-sm font-medium text-on-surface" data-testid="import-preview-name">${t("import_preview_name", esc(o.name))}</p>
+    <p class="mt-1 text-xs text-on-surface-variant" data-testid="import-preview-wifi">${t("import_preview_wifi", wifi.length)}</p>
+    <p class="text-xs text-on-surface-variant" data-testid="import-preview-mobile">${t("import_preview_mobile", mobile.length)}</p>
+    <p class="text-xs text-on-surface-variant" data-testid="import-preview-domains">${t("import_preview_domains", domainRules)}</p>`;
+  if (confirmBtn) confirmBtn.disabled = false;
+}
+
+function setupImportProfileModal() {
+  const modal = document.getElementById("profile_import_modal");
+  const ta = document.getElementById("import-text");
+  const confirmBtn = document.getElementById("import-confirm-btn");
+  const openBtn = document.getElementById("import-profile-btn");
+  if (openBtn) openBtn.addEventListener("click", openImportProfileModal);
+  if (!modal || !ta || !confirmBtn) return;
+  ta.addEventListener("input", () => renderImportPreview(ta.value));
+  confirmBtn.addEventListener("click", async () => {
+    const ok = await importProfileFromString(ta.value);
+    if (ok) {
+      modal.close();
+      document.documentElement.classList.remove("modal-open");
+    }
+  });
+  modal.addEventListener("close", () => document.documentElement.classList.remove("modal-open"));
+}
+
+let renameTarget = "";
+function openRenameModal(name) {
+  renameTarget = name;
+  const input = document.getElementById("rename-input");
+  const modal = document.getElementById("profile_rename_modal");
+  if (input) input.value = name;
+  if (modal) {
+    document.documentElement.classList.add("modal-open");
+    modal.showModal();
+    input?.focus();
+  }
+}
+
+function setupRenameModal() {
+  const modal = document.getElementById("profile_rename_modal");
+  const input = document.getElementById("rename-input");
+  const saveBtn = document.getElementById("rename-save-btn");
+  if (!modal || !input || !saveBtn) return;
+
+  const submit = async () => {
+    const ok = await renameProfile(renameTarget, input.value);
+    if (ok) {
+      modal.close();
+      document.documentElement.classList.remove("modal-open");
+    }
+  };
+  saveBtn.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+  modal.addEventListener("close", () => {
+    document.documentElement.classList.remove("modal-open");
+  });
 }
 
 function setupProfilesPage() {
@@ -972,11 +1658,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupBulkActions();
   setupDomainModal();
   setupProfilesPage();
+  setupRenameModal();
+  setupShareModal();
+  setupImportProfileModal();
+  setupPresetModals();
   setupImportExport();
   setupResetAll();
   setupLanguageLabelSync();
 
-  await Promise.all([loadProfiles(), loadApps()]);
+  await Promise.all([loadProfiles(), loadApps(), loadDomainPresets()]);
   await loadPersistedProfile();
   await loadAboutInfo();
 });

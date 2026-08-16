@@ -24,6 +24,7 @@ Commands:
   domain-add <pkg> <entry...>      Block a domain or IP for a package
   domain-remove <pkg> <entry...>   Unblock a domain or IP for a package
   domain-list <pkg>                Show blocked domains/IPs for a package
+  domain-set <pkg> [entry...]      Replace the whole domain/IP set for a package
   list [--json]                    Show current isolation status
   apply                            Rebuild firewall rules from saved config
   reset                            Clear all rules and saved config
@@ -168,6 +169,7 @@ domain_remove() {
 		[ $skip -eq 0 ] && [ -n "$line" ] && echo "$line" >>"$tmp"
 	done <"$file"
 	mv "$tmp" "$file"
+	[ -s "$file" ] || rm -f "$file"
 }
 
 ensure_chain() {
@@ -243,7 +245,7 @@ list_blocked() {
 			domain_pkgs="$domain_pkgs $(basename "$f" .list)"
 		done
 	fi
-	all_pkgs="$( { read_json "$WIFI_JSON"; read_json "$MOBILE_JSON"; printf '%s\n' $domain_pkgs; } | tr ' ' '\n' | sort -u)"
+	all_pkgs="$( { read_json "$WIFI_JSON"; echo; read_json "$MOBILE_JSON"; echo; printf '%s\n' $domain_pkgs; } | tr ' ' '\n' | grep -v '^$' | sort -u)"
 
 	if [ $json_mode -eq 1 ]; then
 		printf "{"
@@ -380,6 +382,21 @@ cmd_domain_list() {
 	[ -f "$file" ] && cat "$file"
 }
 
+cmd_domain_set() {
+	require_args "$@"
+	pkg="$1"
+	shift
+	file="$(domains_file_for "$pkg")"
+	: >"$file"
+	for entry in "$@"; do
+		[ -n "$entry" ] && echo "$entry" >>"$file"
+	done
+	# Empty Domain Cleanup: drop the file entirely when no entries remain.
+	[ -s "$file" ] || rm -f "$file"
+	apply_rules
+	echo "Domain set updated for $pkg ($# entries)"
+}
+
 cmd_block() {
 	require_args "$@"
 	for pkg in "$@"; do
@@ -447,6 +464,10 @@ case "$1" in
 "domain-list")
 	shift
 	cmd_domain_list "$@"
+	;;
+"domain-set")
+	shift
+	cmd_domain_set "$@"
 	;;
 "block")
 	shift

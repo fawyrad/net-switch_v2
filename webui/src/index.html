@@ -105,6 +105,11 @@
             </div>
 
             <div id="profiles-list" class="mt-4 space-y-2"></div>
+
+            <button type="button" id="import-profile-btn" data-testid="import-profile-btn"
+                class="mt-3 flex w-full items-center justify-center gap-2 rounded-full border border-surface-container-highest px-4 py-2.5 text-sm text-on-surface-variant hover:bg-surface-container-high">
+                <i class="fas fa-file-import text-xs"></i><span data-i18n="import_profile_action">Import</span>
+            </button>
         </section>
 
         <!-- ============================ SETTINGS PAGE ============================ -->
@@ -290,6 +295,39 @@
             <p id="domain-empty" data-i18n="domains_empty" class="mt-4 text-xs text-on-surface-variant hidden">
                 No custom domains blocked for this app yet.
             </p>
+
+            <div class="mt-5 border-t border-surface-container-highest pt-4">
+                <div class="mb-2 flex items-center gap-2">
+                    <i class="fas fa-file-import text-xs text-on-surface-variant"></i>
+                    <span data-i18n="domain_import" class="text-xs font-medium text-on-surface-variant">Import list</span>
+                </div>
+                <div class="mb-2 flex items-center gap-2">
+                    <select id="domain-preset-select" data-testid="domain-preset-select"
+                        class="min-w-0 flex-1 rounded-full bg-surface py-2 px-4 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none">
+                        <option value="" data-i18n="domain_preset_none">Choose a preset…</option>
+                        <option value="ads" data-i18n="domain_preset_ads">Ads &amp; Trackers</option>
+                        <option value="social" data-i18n="domain_preset_social">Social Media</option>
+                    </select>
+                    <button type="button" id="domain-preset-save-btn" data-testid="domain-preset-save-btn"
+                        data-i18n-title="preset_save" title="Save as preset"
+                        class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-surface text-on-surface-variant hover:bg-surface-container-highest">
+                        <i class="fas fa-bookmark text-xs"></i>
+                    </button>
+                    <button type="button" id="domain-preset-manage-btn" data-testid="domain-preset-manage-btn"
+                        data-i18n-title="preset_manager_title" title="Manage blocklists"
+                        class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-surface text-on-surface-variant hover:bg-surface-container-highest">
+                        <i class="fas fa-sliders text-xs"></i>
+                    </button>
+                </div>
+                <textarea id="domain-import-text" data-testid="domain-import-text" rows="3"
+                    data-i18n-placeholder="domain_import_placeholder"
+                    placeholder="Paste domains — comma, space or newline separated"
+                    class="w-full resize-none rounded-2xl bg-surface py-2 px-4 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"></textarea>
+                <button type="button" id="domain-import-btn" data-testid="domain-import-btn"
+                    class="mt-2 w-full rounded-full bg-secondary-container px-4 py-2 text-sm font-medium text-on-secondary-container">
+                    <i class="fas fa-plus mr-1 text-xs"></i><span data-i18n="domain_import_add">Add all</span>
+                </button>
+            </div>
         </div>
     </dialog>
 
@@ -324,6 +362,105 @@
                 <button type="button" id="confirm-reset-btn" data-i18n="settings_reset_confirm_btn"
                     class="flex-1 rounded-full bg-error-container px-4 py-2.5 text-sm font-medium text-on-error-container">Reset</button>
             </div>
+        </div>
+    </dialog>
+
+    <dialog id="profile_rename_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
+        <div class="p-6">
+            <div class="mb-4 flex items-center justify-between">
+                <h3 data-i18n="rename_profile_title" class="text-lg font-semibold text-on-surface">Rename Profile</h3>
+                <button type="button" id="rename-modal-close" onclick="profile_rename_modal.close()"
+                    class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+            <input type="text" id="rename-input" data-testid="rename-input" data-i18n-placeholder="rename_profile_placeholder"
+                placeholder="Profile name"
+                class="w-full rounded-full bg-surface py-2.5 px-4 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none" />
+            <div class="mt-5 flex gap-3">
+                <button type="button" id="rename-cancel-btn" data-i18n="cancel" onclick="profile_rename_modal.close()"
+                    class="flex-1 rounded-full bg-surface-container-high px-4 py-2.5 text-sm text-on-surface">Cancel</button>
+                <button type="button" id="rename-save-btn" data-testid="rename-save-btn" data-i18n="save"
+                    class="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-on-primary">Save</button>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="profile_share_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
+        <div class="p-6">
+            <div class="mb-2 flex items-center justify-between">
+                <h3 data-i18n="share_profile_title" class="text-lg font-semibold text-on-surface">Share Profile</h3>
+                <button type="button" onclick="profile_share_modal.close()"
+                    class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+            <p data-i18n="share_profile_desc" class="mb-3 text-xs text-on-surface-variant">Copy this code and send it to a friend, or keep it as a backup.</p>
+            <textarea id="share-text" data-testid="share-text" rows="4" readonly
+                class="w-full resize-none rounded-2xl bg-surface py-2 px-4 text-xs text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"></textarea>
+            <button type="button" id="share-copy-btn" data-testid="share-copy-btn"
+                class="mt-4 w-full rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-on-primary">
+                <i class="fas fa-copy mr-1 text-xs"></i><span data-i18n="copy">Copy</span>
+            </button>
+        </div>
+    </dialog>
+
+    <dialog id="profile_import_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
+        <div class="p-6">
+            <div class="mb-2 flex items-center justify-between">
+                <h3 data-i18n="import_profile_title" class="text-lg font-semibold text-on-surface">Import Profile</h3>
+                <button type="button" onclick="profile_import_modal.close()"
+                    class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+            <p data-i18n="import_profile_desc" class="mb-3 text-xs text-on-surface-variant">Paste a shared profile code below.</p>
+            <textarea id="import-text" data-testid="import-text" rows="4"
+                data-i18n-placeholder="import_profile_placeholder"
+                placeholder="Paste profile code (NSPROF1:…)"
+                class="w-full resize-none rounded-2xl bg-surface py-2 px-4 text-xs text-on-surface focus:ring-2 focus:ring-primary focus:outline-none"></textarea>
+            <div id="import-preview" data-testid="import-preview"
+                class="mt-3 hidden rounded-2xl bg-surface p-3"></div>
+            <button type="button" id="import-confirm-btn" data-testid="import-confirm-btn"
+                class="mt-4 w-full rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-on-primary disabled:opacity-40">
+                <i class="fas fa-file-import mr-1 text-xs"></i><span data-i18n="import_profile_btn">Import</span>
+            </button>
+        </div>
+    </dialog>
+
+    <dialog id="preset_save_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
+        <div class="p-6">
+            <div class="mb-4 flex items-center justify-between">
+                <h3 data-i18n="preset_save_title" class="text-lg font-semibold text-on-surface">Save Blocklist Preset</h3>
+                <button type="button" onclick="preset_save_modal.close()"
+                    class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+            <input type="text" id="preset-name-input" data-testid="preset-name-input"
+                data-i18n-placeholder="preset_save_placeholder" placeholder="Preset name"
+                class="w-full rounded-full bg-surface py-2.5 px-4 text-sm text-on-surface focus:ring-2 focus:ring-primary focus:outline-none" />
+            <div class="mt-5 flex gap-3">
+                <button type="button" data-i18n="cancel" onclick="preset_save_modal.close()"
+                    class="flex-1 rounded-full bg-surface-container-high px-4 py-2.5 text-sm text-on-surface">Cancel</button>
+                <button type="button" id="preset-save-confirm-btn" data-testid="preset-save-confirm-btn" data-i18n="save"
+                    class="flex-1 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-on-primary">Save</button>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="preset_manager_modal" class="modal rounded-3xl border-none bg-surface-container-high p-0">
+        <div class="p-6">
+            <div class="mb-2 flex items-center justify-between">
+                <h3 data-i18n="preset_manager_title" class="text-lg font-semibold text-on-surface">Manage Blocklists</h3>
+                <button type="button" onclick="preset_manager_modal.close()"
+                    class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest">
+                    <i class="fas fa-times text-sm"></i>
+                </button>
+            </div>
+            <p data-i18n="preset_manager_desc" class="mb-3 text-xs text-on-surface-variant">Your saved domain blocklists. Apply them from any app's domain list.</p>
+            <div id="preset-manager-list" data-testid="preset-manager-list" class="max-h-72 space-y-2 overflow-y-auto"></div>
+            <p id="preset-manager-empty" data-i18n="no_custom_presets" class="hidden text-xs text-on-surface-variant">No custom blocklists yet.</p>
         </div>
     </dialog>
 </body>
